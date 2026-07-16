@@ -15,12 +15,17 @@ broker plus a small web dashboard/API.
 ### Quick install (recommended)
 
 The installer pulls the project straight from GitHub, so you don't need to
-copy files onto the Pi by hand:
+copy files onto the Pi by hand. On a **brand new Pi**, run:
 ```bash
+cd ~
 git clone https://github.com/efife1/Equipment_Dashboard.git
 cd Equipment_Dashboard/raspberry_pi_server
-sudo ./install.sh
+sudo bash install.sh
 ```
+(Using `sudo bash install.sh` rather than `sudo ./install.sh` avoids a
+"command not found" error — files uploaded through GitHub's web UI lose
+their executable permission bit, so relying on it to run directly isn't
+reliable. `bash install.sh` sidesteps that entirely.)
 
 This one script handles everything:
 - Installs Mosquitto (MQTT broker) and starts it
@@ -33,9 +38,17 @@ This one script handles everything:
 - Prints the dashboard URL when done
 
 **Deploying updates later:** push your changes to GitHub, then just re-run
-`sudo ./install.sh` on the Pi — it pulls the latest commit and restarts the
-service. Your commissioning registry (`registry.json`) isn't tracked by git,
-so it survives updates untouched.
+`sudo bash install.sh` on the Pi — it pulls the latest commit and restarts
+the service. Your commissioning registry (`registry.json`) isn't tracked by
+git, so it survives updates untouched.
+
+**If a previous/different install is already on this Pi:** clear it out
+first so nothing conflicts with the fresh install:
+```bash
+sudo systemctl disable --now gpio-server 2>/dev/null
+sudo rm -rf ~/Equipment_Dashboard /opt/gpio-monitor
+```
+then run the quick install steps above.
 
 > **Note:** `install.sh` assumes the repo keeps these server files in a
 > `raspberry_pi_server/` subfolder, matching this project's layout. If your
@@ -79,9 +92,10 @@ Install Python dependencies and run the server:
 pip install -r requirements.txt
 python3 gpio_server.py
 ```
-Run it manually like this whenever you want, or set it up as a persistent
+Run it manually like this whenever you want, or install it as a persistent
 service yourself — `gpio-server.service` (included) is the same systemd unit
-the installer uses, if you want to install it by hand instead.
+`install.sh` sets up, if you'd rather wire it up by hand instead of running
+the full script.
 
 - Dashboard: `http://<pi-ip>:8080`
 - Raw JSON:  `http://<pi-ip>:8080/api/devices`
@@ -183,3 +197,27 @@ whole registry as JSON from `/api/registry`.
 - The Pi server also independently marks a device **stale** if it hasn't
   heard from it in `STALE_TIMEOUT_SEC` (default 30s) — a backstop in case a
   device loses power abruptly and the LWT doesn't arrive in time.
+
+## 6. Troubleshooting
+
+**`sudo: ./install.sh: command not found`** — run `sudo bash install.sh`
+instead. Files uploaded through GitHub's web interface lose their
+executable permission bit, so `./install.sh` (which relies on that bit)
+fails even though the file is right there; `bash install.sh` runs it
+regardless of permissions.
+
+**Wrong content after cloning / unexpected service name in the install
+output** — double check `github.com/efife1/Equipment_Dashboard` actually
+contains this project's files (an `esp32_gpio_client/` folder and a
+`raspberry_pi_server/` folder with `gpio_server.py`, `install.sh`, etc. in
+it) before running the installer. If the repo was previously used for
+something else, clear out any stale install first:
+```bash
+sudo systemctl disable --now <old-service-name> 2>/dev/null
+sudo rm -rf ~/Equipment_Dashboard /opt/gpio-monitor
+```
+then re-clone and run `sudo bash install.sh` again.
+
+**`fatal: could not create work tree dir` when re-cloning** — this happens
+if your terminal's current directory is *inside* the folder you're trying to
+delete/recreate. Run `cd ~` first, then the cleanup and clone commands.
