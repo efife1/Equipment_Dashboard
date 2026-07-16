@@ -28,7 +28,11 @@ their executable permission bit, so relying on it to run directly isn't
 reliable. `bash install.sh` sidesteps that entirely.)
 
 This one script handles everything:
-- Installs Mosquitto (MQTT broker) and starts it
+- Installs Mosquitto (MQTT broker), configured to listen on all interfaces,
+  and starts it
+- Sets up **automatic DHCP detection/fallback** on the ESP32-facing
+  interface (see "Network auto-config" below) — no manual IP planning
+  needed, and safe to plug into any network without risking a conflict
 - Installs Avahi and advertises the broker via mDNS (`_mqtt._tcp`) so ESP32
   units find it automatically
 - Deploys the server code to `/opt/gpio-monitor`
@@ -103,7 +107,53 @@ the full script.
 The server needs no per-device configuration — any ESP32 that publishes to
 `gpio/<device_id>/status` shows up automatically.
 
-## 2. ESP32 client setup
+## 2. Network auto-config: DHCP detection with fallback
+
+Rather than assuming a DHCP server is present (a router) or hardcoding a
+static IP that risks colliding with something already on your network, the
+installer sets up `network-autoconfig.sh` to handle this automatically on
+the interface the ESP32 units connect to (`TARGET_IFACE`, default `eth0` —
+edit that variable near the top of `install.sh` if yours is named
+differently, e.g. `end0` on some Pi models).
+
+**What it does, every time it runs:**
+1. Sends a real DHCP discover probe on that interface and waits briefly for
+   a response.
+2. **If a DHCP server answers** (e.g. this segment turns out to have a
+   router after all): the Pi configures itself as a normal DHCP client and
+   makes sure it is *not* also handing out addresses — avoiding ever
+   becoming a second, conflicting DHCP server.
+3. **If nothing answers** (an isolated switch with no router, like this
+   project was built for): the Pi assigns itself a fixed fallback address
+   (`10.42.0.1/24` by default) and starts serving DHCP itself — but strictly
+   on that one interface/segment, never routed or bridged anywhere else.
+
+**This re-runs automatically**, not just at boot — a NetworkManager
+dispatcher hook re-triggers it any time that interface's link state
+changes (cable plugged in, moved to a different switch, etc.), so nothing
+needs to be reconfigured by hand if the Pi ends up on a different network
+later.
+
+You can also trigger it manually any time:
+```bash
+sudo /opt/gpio-monitor/network-autoconfig.sh eth0
+```
+Logs from the automatic (dispatcher-triggered) runs go to
+`/var/log/gpio-monitor-net.log`.
+
+**Avoiding collisions:** if `10.42.0.0/24` happens to already be in use
+somewhere reachable from this segment, edit `FALLBACK_IP`/`FALLBACK_CIDR`
+near the top of `network-autoconfig.sh` to a range that's clear on your
+network, then re-run it (or push the change to GitHub and re-run
+`install.sh`).
+
+> **Requires NetworkManager** (the default on Raspberry Pi OS Bookworm and
+> newer). If your Pi uses the older dhcpcd/ifupdown stack instead, the
+> installer will detect that, skip this feature, and tell you — in that
+> case, either plug into a network with an existing DHCP server, or set up
+> a manual `dnsmasq`-based DHCP server yourself for that interface.
+
+## 3. ESP32 client setup
 
 1. In Arduino IDE, install board support: **Boards Manager → esp32 (Espressif Systems)**, version 2.0.12+.
 2. Install libraries: **PubSubClient** and **ArduinoJson** (Library Manager). (**ESPmDNS** and **SPI** ship with the ESP32 core, no separate install needed.)
@@ -135,7 +185,7 @@ avoids boot-strapping pins (0/3/45/46). If you plan to also use this board's
 onboard TF card slot (GPIO4–7) or camera header, pick different signal pins
 for those, since they overlap with a few of the defaults above.
 
-## 3. Network notes
+## 4. Network notes
 
 - All units use **DHCP** — no static IP config needed on the ESP32 side.
 - The Pi's MQTT broker is found via **mDNS/Zeroconf** (`_mqtt._tcp` service
@@ -169,7 +219,7 @@ for those, since they overlap with a few of the defaults above.
   ESP32's MAC on your router if you want consistent IPs for troubleshooting
   — it's optional now, since neither side depends on a fixed address.
 
-## 4. Commissioning devices (MAC → equipment name)
+## 5. Commissioning devices (MAC → equipment name)
 
 Each ESP32 now reports its full MAC address in every MQTT message. The Pi
 keeps a persistent registry (`raspberry_pi_server/registry.json`, created
@@ -188,7 +238,7 @@ shows *"Compressor Panel 3"* instead of a bare device ID.
 You can also view/edit/delete existing entries at `/commission`, or pull the
 whole registry as JSON from `/api/registry`.
 
-## 5. How offline detection works
+## 6. How offline detection works
 
 - Each ESP32 sets an MQTT **Last Will** message (`offline`) that the broker
   publishes automatically if the connection drops uncleanly.
@@ -198,7 +248,7 @@ whole registry as JSON from `/api/registry`.
   heard from it in `STALE_TIMEOUT_SEC` (default 30s) — a backstop in case a
   device loses power abruptly and the LWT doesn't arrive in time.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 **`sudo: ./install.sh: command not found`** — run `sudo bash install.sh`
 instead. Files uploaded through GitHub's web interface lose their
@@ -221,3 +271,13 @@ then re-clone and run `sudo bash install.sh` again.
 **`fatal: could not create work tree dir` when re-cloning** — this happens
 if your terminal's current directory is *inside* the folder you're trying to
 delete/recreate. Run `cd ~` first, then the cleanup and clone commands.
+
+**ESP32 Serial Monitor gets stuck repeating "ETH Connected (link up)" and
+never prints "got IP via DHCP"** — this means the physical link is fine but
+DHCP itself never completes, which happens on an isolated switch with no
+router/DHCP server present. The fix is on the Pi side, not the ESP32:
+confirm `network-autoconfig.service` ran successfully
+(`sudo journalctl -u network-autoconfig -n 30`) and that the Pi picked up
+its fallback address (`ip -4 addr show eth0`). If it's still not handing
+out leases, try re-running it manually:
+`sudo /opt/gpio-monitor/network-autoconfig.sh eth0`.
