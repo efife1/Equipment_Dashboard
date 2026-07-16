@@ -14,9 +14,11 @@ broker plus a small web dashboard/API.
 
 ### Quick install (recommended)
 
-From the `raspberry_pi_server` folder on the Pi:
+The installer pulls the project straight from GitHub, so you don't need to
+copy files onto the Pi by hand:
 ```bash
-chmod +x install.sh
+git clone https://github.com/efife1/Equipment_Dashboard.git
+cd Equipment_Dashboard/raspberry_pi_server
 sudo ./install.sh
 ```
 
@@ -24,14 +26,22 @@ This one script handles everything:
 - Installs Mosquitto (MQTT broker) and starts it
 - Installs Avahi and advertises the broker via mDNS (`_mqtt._tcp`) so ESP32
   units find it automatically
-- Copies the server files to `/opt/gpio-monitor`
+- Deploys the server code to `/opt/gpio-monitor`
 - Creates a Python virtual environment and installs dependencies
 - Installs a **systemd service** (`gpio-server`) so the server starts
   automatically on boot and restarts itself if it ever crashes
 - Prints the dashboard URL when done
 
-It's safe to re-run any time (e.g. after pulling updated files) — it'll just
-reinstall over the existing setup.
+**Deploying updates later:** push your changes to GitHub, then just re-run
+`sudo ./install.sh` on the Pi — it pulls the latest commit and restarts the
+service. Your commissioning registry (`registry.json`) isn't tracked by git,
+so it survives updates untouched.
+
+> **Note:** `install.sh` assumes the repo keeps these server files in a
+> `raspberry_pi_server/` subfolder, matching this project's layout. If your
+> repo's structure is different, edit the `REPO_SUBDIR` variable near the
+> top of `install.sh` to match (set it to `""` if the files sit at the repo
+> root instead).
 
 Once installed, manage it with:
 ```bash
