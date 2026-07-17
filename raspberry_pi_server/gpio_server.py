@@ -262,15 +262,25 @@ DASHBOARD_HTML = """
       border-top: 4px solid var(--accent, #555);
       border-radius: 6px;
       padding: 12px 14px;
+      transition: opacity 0.15s;
     }
-    .card-header { display: flex; justify-content: space-between; align-items: baseline; }
+    .card.card-wide { grid-column: span 2; min-width: 0; }
+    .card.card-hidden { display: none !important; }
+    .card-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
     .card-title { font-size: 1.05rem; font-weight: bold; }
     .card-subtitle { color: #999; font-size: 0.8rem; margin-top: 2px; }
-    .badge { font-size: 0.75rem; padding: 2px 8px; border-radius: 10px; font-weight: bold; }
+    .card-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .badge { font-size: 0.75rem; padding: 2px 8px; border-radius: 10px; font-weight: bold; white-space: nowrap; }
     .badge.online   { background: #1f3d24; color: #4caf50; }
     .badge.offline  { background: #3d1f1f; color: #f44336; }
     .badge.stale    { background: #3d2f1f; color: #ff9800; }
     .badge.unknown  { background: #2a2a2a; color: #999; }
+    .hide-btn {
+      background: none; border: 1px solid #333; color: #888; border-radius: 4px;
+      width: 20px; height: 20px; line-height: 1; cursor: pointer; font-size: 13px;
+      display: flex; align-items: center; justify-content: center; padding: 0;
+    }
+    .hide-btn:hover { background: #2a2a2a; color: #eee; }
     .unreg { color: #ff9800; font-style: italic; font-size: 0.85rem; }
     .unreg a { color: #4caf50; }
     .channels { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
@@ -282,24 +292,29 @@ DASHBOARD_HTML = """
     .meta { margin-top: 10px; padding-top: 8px; border-top: 1px solid #292929; color: #777; font-size: 0.75rem; line-height: 1.5; }
     .empty { color: #777; margin-top: 2rem; }
 
-    .tpd-decoders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
-    .tpd-decoder { background: #141414; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; }
-    .tpd-fields { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+    .tpd-decoders { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; margin-top: 10px; }
+    .tpd-decoder { background: #141414; border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px; }
+    .tpd-fields { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
     .tpd-fields input {
       width: 100%; background: #1e1e1e; border: 1px solid #333; border-radius: 4px;
-      color: #eee; font-size: 11px; padding: 3px 5px; text-align: center; box-sizing: border-box;
+      color: #eee; font-size: 12px; padding: 4px 6px; text-align: center; box-sizing: border-box;
     }
     .tpd-fields input.tpd-name { font-weight: 500; }
     .tpd-fields input.tpd-secondary { color: #999; }
-    .tpd-leds { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
-    .tpd-led { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-    .tpd-led .dot { width: 12px; height: 12px; }
-    .tpd-led-label { font-size: 8px; color: #999; text-align: center; }
+    .tpd-leds { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    .tpd-led { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .tpd-led .dot { width: 13px; height: 13px; }
+    .tpd-led-label { font-size: 9.5px; color: #999; text-align: center; white-space: nowrap; }
     .dot.led-green { background: #4caf50; box-shadow: 0 0 5px #4caf50; }
     .dot.led-yellow { background: #ffca28; box-shadow: 0 0 5px #ffca28; }
     .dot.led-red { background: #f44336; box-shadow: 0 0 5px #f44336; }
     .dot.led-blue { background: #42a5f5; box-shadow: 0 0 5px #42a5f5; }
     .dot.led-idle { background: #333; }
+
+    .filter-bar { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1rem; font-size: 0.85rem; color: #aaa; }
+    .filter-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .filter-bar a { color: #4caf50; cursor: pointer; text-decoration: none; }
+    .filter-bar a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -312,6 +327,10 @@ DASHBOARD_HTML = """
     <strong id="online-count">{{ online_count }}</strong> of
     <strong id="total-count">{{ total_count }}</strong> device(s) online.
   </p>
+  <div class="filter-bar">
+    <label><input type="checkbox" id="hide-offline-toggle"> Hide offline devices</label>
+    <a id="show-hidden-link" style="display:none;" onclick="showAllHidden()"></a>
+  </div>
 
   {% if devices|length == 0 %}
     <p class="empty">No devices seen yet. Power on an ESP32 unit and it'll appear here automatically.</p>
@@ -320,7 +339,8 @@ DASHBOARD_HTML = """
   <div class="cards" id="cards">
     {% for id, d in devices.items() %}
     {% set view = card_view(d) %}
-    <div class="card" style="--accent: {{ view.color }}" data-device-id="{{ id }}">
+    <div class="card {{ 'card-wide' if view.layout == 'talent_pack_decoder' else '' }}"
+         style="--accent: {{ view.color }}" data-device-id="{{ id }}" data-status="{{ d.status }}">
       <div class="card-header">
         <div>
           <div class="card-title">
@@ -331,7 +351,10 @@ DASHBOARD_HTML = """
             {% if view.equipment and view.equipment.location %} &middot; {{ view.equipment.location }}{% endif %}
           </div>
         </div>
-        <span class="badge {{ d.status }}" data-role="status-badge">{{ d.status }}</span>
+        <div class="card-header-right">
+          <span class="badge {{ d.status }}" data-role="status-badge">{{ d.status }}</span>
+          <button class="hide-btn" title="Hide this card" onclick="hideCard('{{ id }}')">&times;</button>
+        </div>
       </div>
 
       {% if not view.equipment %}
@@ -395,6 +418,62 @@ DASHBOARD_HTML = """
   </div>
 
   <script>
+    // ---- Card visibility: hide-offline toggle + per-card manual hide ----
+    // Both preferences are per-browser (localStorage), not server-side —
+    // "what I want to see on this screen" isn't shared server state.
+    const HIDE_OFFLINE_KEY = 'gpio_monitor_hide_offline';
+    const HIDDEN_CARDS_KEY = 'gpio_monitor_hidden_cards';
+
+    function getHiddenSet() {
+      try {
+        return new Set(JSON.parse(localStorage.getItem(HIDDEN_CARDS_KEY) || '[]'));
+      } catch (e) { return new Set(); }
+    }
+    function saveHiddenSet(set) {
+      localStorage.setItem(HIDDEN_CARDS_KEY, JSON.stringify(Array.from(set)));
+    }
+    function hideCard(deviceId) {
+      const hidden = getHiddenSet();
+      hidden.add(deviceId);
+      saveHiddenSet(hidden);
+      applyFilters();
+    }
+    function showAllHidden() {
+      saveHiddenSet(new Set());
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const hideOffline = document.getElementById('hide-offline-toggle').checked;
+      const hidden = getHiddenSet();
+      let visibleShown = 0;
+
+      document.querySelectorAll('.card').forEach(function (card) {
+        const id = card.dataset.deviceId;
+        const status = card.dataset.status;
+        const manuallyHidden = hidden.has(id);
+        const offlineHidden = hideOffline && status !== 'online';
+        card.classList.toggle('card-hidden', manuallyHidden || offlineHidden);
+      });
+
+      const link = document.getElementById('show-hidden-link');
+      if (hidden.size > 0) {
+        link.style.display = '';
+        link.textContent = hidden.size + ' card(s) manually hidden — show all';
+      } else {
+        link.style.display = 'none';
+      }
+    }
+
+    document.getElementById('hide-offline-toggle').addEventListener('change', function (e) {
+      localStorage.setItem(HIDE_OFFLINE_KEY, e.target.checked ? '1' : '0');
+      applyFilters();
+    });
+
+    // Restore saved toggle state on load
+    document.getElementById('hide-offline-toggle').checked = localStorage.getItem(HIDE_OFFLINE_KEY) === '1';
+    applyFilters();
+
     // Debounced live-save for decoder text fields — fires shortly after the
     // user stops typing, so it doesn't spam the server on every keystroke.
     let saveTimers = {};
@@ -441,6 +520,7 @@ DASHBOARD_HTML = """
             badge.textContent = d.status;
             badge.className = 'badge ' + d.status;
           }
+          card.dataset.status = d.status;
           const lastSeen = card.querySelector('[data-role="last-seen"]');
           if (lastSeen) lastSeen.textContent = d.last_seen || '-';
 
@@ -472,6 +552,7 @@ DASHBOARD_HTML = """
 
         document.getElementById('online-count').textContent = onlineCount;
         document.getElementById('total-count').textContent = total;
+        applyFilters();
       } catch (err) {
         console.error('poll failed', err);
       }
