@@ -202,11 +202,11 @@ void publishStates(bool force) {
   }
   if (!changed) return;
 
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
   doc["device_id"] = deviceId;
   doc["mac"] = ETH.macAddress();       // used by the Pi to look up equipment name
   doc["ip"] = ETH.localIP().toString();
-  JsonArray arr = doc.createNestedArray("gpio");
+  JsonArray arr = doc["gpio"].to<JsonArray>();
   for (int i = 0; i < NUM_GPIO; i++) arr.add(lastStates[i]);
 
   char payload[384];
