@@ -533,7 +533,7 @@ COMMISSION_HTML = """
     <label>Card Type
       <select name="device_type">
         <option value="">-- none (generic GPIO labels) --</option>
-        {% for tid, t in types.items()|sort(attribute='0', attribute_type='int') %}
+        {% for tid, t in types_sorted %}
         <option value="{{ tid }}" {{ 'selected' if prefill_entry and prefill_entry.device_type == tid else '' }}>{{ tid }}: {{ t.name }}</option>
         {% endfor %}
       </select>
@@ -580,10 +580,13 @@ COMMISSION_HTML = """
 def commission_form():
     prefill_mac = request.args.get("mac", "")
     prefill_entry = registry.get_equipment(prefill_mac) if prefill_mac else None
+    all_types = device_types.get_all()
+    types_sorted = sorted(all_types.items(), key=lambda item: int(item[0]))
     return render_template_string(
         COMMISSION_HTML,
         reg=registry.get_all(),
-        types=device_types.get_all(),
+        types=all_types,
+        types_sorted=types_sorted,
         prefill_mac=prefill_mac,
         prefill_entry=prefill_entry,
     )
