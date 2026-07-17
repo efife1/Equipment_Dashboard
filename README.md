@@ -175,10 +175,9 @@ network, then re-run it (or push the change to GitHub and re-run
 
 1. In Arduino IDE, install board support: **Boards Manager → esp32 (Espressif Systems)**, version 2.0.12+.
 2. Install libraries: **PubSubClient** and **ArduinoJson** (Library Manager). (**ESPmDNS** and **SPI** ship with the ESP32 core, no separate install needed.)
-3. Open the `.ino` for the device type you're flashing — e.g.
-   `esp32_firmware/device_type_1_talent_pack_decoder/esp32_gpio_client.ino`
-   for a Talent Pack Decoder unit. (Building a new device type? Start from
-   `esp32_firmware/_template/` instead — see its `README.md`.)
+3. Open the `.ino` inside the `esp32_firmware/device_type_N_.../` folder
+   matching the device you're flashing. (Building a new device type?
+   Start from `esp32_firmware/_template/` instead — see its `README.md`.)
 4. Board settings — this firmware targets the **Waveshare ESP32-S3-ETH** (onboard W5500 Ethernet over SPI):
    - **Tools → Board → esp32 → "ESP32S3 Dev Module"** (not plain "ESP32 Dev Module" — picking the wrong one causes an upload error like `This chip is ESP32-S3, not ESP32`)
    - **Tools → USB CDC On Boot → Enabled** (needed for Serial Monitor over this board's USB-C port)
@@ -187,9 +186,9 @@ network, then re-run it (or push the change to GitHub and re-run
    either, since it's discovered automatically via mDNS (see below).
 6. Upload — this same firmware/config works unmodified on every unit *of
    that device type*, since nothing device- or network-specific is
-   hardcoded (a Talent Pack Decoder unit and, say, a future "Pump Station"
-   unit would run different `.ino` files, but many identical Talent Pack
-   Decoder units all run the exact same one).
+   hardcoded. Different device types run different `.ino` files (each with
+   their own pin layout), but every unit of the same device type runs the
+   exact same one.
 7. Open Serial Monitor (115200 baud) to confirm it gets a DHCP address, finds the broker, and connects to MQTT.
 
 Repeat for each unit — no code changes needed between units of the same
@@ -216,11 +215,11 @@ genuinely safe to use, split by physical header side on this board (see
 - **Left header:** 1, 2, 15, 16, 17, 18, 21
 - **Right header:** 38, 39, 40, 41, 42, 43, 44, 47, 48
 
-The Talent Pack Decoder's `GPIO_PINS` wiring uses all 7 left-side pins for
-Decoder 1 (only 5 needed, 2 spare) and 8 of the 9 right-side pins across
-Decoders 2 and 3 (1 spare on the right). If you plan to also use this board's onboard
-TF card slot (GPIO4–7) or camera header, those need different signal pins
-entirely, since this project's channels don't currently use that range.
+Each device type's own folder documents exactly which of these it uses and
+why (see that device type's section further down for the specifics). If
+you also plan to use this board's onboard TF card slot (GPIO4–7) or camera
+header for something, pick different signal pins for those, since a device
+type's channels may otherwise overlap with that range.
 
 ## 4. Network notes
 
@@ -292,9 +291,9 @@ permanently lost.
    *"unregistered"* card along with its MAC address.
 2. Click **"register it"** on that card (or go to `http://<pi-ip>:8080/commission`
    and enter the MAC manually — also printed in Serial Monitor on boot).
-3. Fill in the equipment name, pick a **card type** from the dropdown (e.g.
-   "1: Talent Pack Decoder", or define a new generic type first via the
-   link on that page), and optionally a location and notes.
+3. Fill in the equipment name, pick a **card type** from the dropdown
+   (defining a new one first via the link on that page if needed), and
+   optionally a location and notes.
 4. Save — the dashboard updates immediately, and both the equipment
    mapping and card type assignment persist across server restarts.
 
