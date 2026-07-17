@@ -1,8 +1,9 @@
 # ESP32 → Raspberry Pi GPIO Monitor (MQTT)
 
-Multiple ESP32-Ethernet units each monitor 12 GPIO inputs and report their
-state over MQTT (DHCP-assigned IPs) to a Raspberry Pi, which runs the MQTT
-broker plus a small web dashboard/API.
+Multiple ESP32-Ethernet units each monitor a set of GPIO inputs (channel
+count depends on the card type wired up — see "Card types" below) and
+report their state over MQTT (DHCP-assigned IPs) to a Raspberry Pi, which
+runs the MQTT broker plus a web dashboard showing each unit as a card.
 
 ```
 [ESP32 #1] --Ethernet/DHCP--\
@@ -162,7 +163,12 @@ network, then re-run it (or push the change to GitHub and re-run
    - **Tools → Board → esp32 → "ESP32S3 Dev Module"** (not plain "ESP32 Dev Module" — picking the wrong one causes an upload error like `This chip is ESP32-S3, not ESP32`)
    - **Tools → USB CDC On Boot → Enabled** (needed for Serial Monitor over this board's USB-C port)
 5. Edit the **USER CONFIG** section at the top:
-   - `GPIO_PINS[12]` → defaults are 12 pins already verified free on this board (avoiding the Ethernet SPI pins, the internally-reserved PSRAM pins, USB pins, and boot-strapping pins) — only change these if you also need the onboard TF card or camera header, since those share some of the same pins.
+   - `GPIO_PINS[15]` → currently wired for **card type 1, "Talent Pack
+     Decoder"**: 3 decoder groups of 5 channels each (On-Air, Prod,
+     Error/Manual-A, Error/Manual-B, Call), in that fixed order — see
+     "Card types" below for the full pin table and what each channel means.
+     Don't reorder these without also updating the matching logic in
+     `gpio_server.py`.
    - No broker address needed — it's discovered automatically via mDNS (see below).
 6. Upload — this same firmware/config works unmodified on every unit, since nothing device- or network-specific is hardcoded.
 7. Open Serial Monitor (115200 baud) to confirm it gets a DHCP address, finds the broker, and connects to MQTT.
@@ -178,12 +184,22 @@ W5500 chip over SPI for Ethernet (not the RMII/LAN8720 hardware other ESP32
 Ethernet boards use). Its SPI bus and control pins are fixed by the board:
 MISO=12, MOSI=11, SCLK=13, CS=14, RST=9, INT=10.
 
-The default `GPIO_PINS[12]` (1, 2, 4, 5, 6, 7, 8, 15, 16, 17, 18, 21) avoids
-those, avoids GPIO33–37 (reserved internally for PSRAM on this board's
-ESP32-S3R8 per Waveshare's own FAQ), avoids the native-USB pins (19/20), and
-avoids boot-strapping pins (0/3/45/46). If you plan to also use this board's
-onboard TF card slot (GPIO4–7) or camera header, pick different signal pins
-for those, since they overlap with a few of the defaults above.
+The board only exposes a limited set of pins beyond that — GPIO33–37 are
+permanently reserved internally for PSRAM on this board's ESP32-S3R8 (per
+Waveshare's own FAQ, not usable regardless of what other pinout charts
+show), GPIO19/20 are the native-USB D-/D+ pins, and GPIO0/3/45/46 are
+boot-strapping pins best avoided (GPIO45 especially, since it selects the
+flash's operating voltage at boot). That leaves about 16 pins that are
+genuinely safe to use, split by physical header side on this board:
+
+- **Left header:** 1, 2, 15, 16, 17, 18, 21
+- **Right header:** 38, 39, 40, 41, 42, 43, 44, 47, 48
+
+The current `GPIO_PINS[15]` wiring uses all 7 left-side pins for Decoder 1
+(only 5 needed, 2 spare) and 8 of the 9 right-side pins across Decoders 2
+and 3 (1 spare on the right). If you plan to also use this board's onboard
+TF card slot (GPIO4–7) or camera header, those need different signal pins
+entirely, since this project's channels don't currently use that range.
 
 ## 4. Network notes
 
@@ -219,24 +235,70 @@ for those, since they overlap with a few of the defaults above.
   ESP32's MAC on your router if you want consistent IPs for troubleshooting
   — it's optional now, since neither side depends on a fixed address.
 
-## 5. Commissioning devices (MAC → equipment name)
+## 5. Commissioning devices (MAC → equipment name) and card types
 
-Each ESP32 now reports its full MAC address in every MQTT message. The Pi
-keeps a persistent registry (`raspberry_pi_server/registry.json`, created
+Each ESP32 reports its full MAC address in every MQTT message. The Pi keeps
+a persistent registry (`raspberry_pi_server/registry.json`, created
 automatically) mapping MAC addresses to equipment names, so the dashboard
-shows *"Compressor Panel 3"* instead of a bare device ID.
+shows *"Compressor Panel 3"* instead of a bare device ID — rendered as a
+card in a grid, not a table row.
 
-**To commission a new unit:**
-1. Power it on and let it connect — it'll show up on the dashboard as
-   *"unregistered"* along with its MAC address.
-2. Click **"register it"** next to it (or go to `http://<pi-ip>:8080/commission`
+**Card types** (`raspberry_pi_server/device_types.json`, up to 32 slots)
+control how each device's card is drawn. Most types use the **generic
+layout**: a name, an accent color, and a label for each monitored GPIO
+channel (e.g. *"Pump Running"* instead of *"GPIO 0"*). A device with no
+type assigned still works fine — its card just falls back to generic
+"GPIO 0", "GPIO 1", etc. Manage all types at `http://<pi-ip>:8080/device-types`.
+
+### Card type 1: Talent Pack Decoder (built-in special layout)
+
+Slot 1 is auto-seeded on first run as a bespoke card layout (not the
+generic label grid) for monitoring 3 broadcast decoder units on one card.
+Each decoder shows:
+- **Two live-editable text fields**: name and frequency (a third,
+  receiver, is stored per-decoder too — see below)
+- **4 LED indicators**: On-Air (green), Prod (yellow), a two-way
+  Error/Manual indicator (red = Error, blue = Manual, using 2 GPIO pins),
+  and Call (red)
+
+This needs **5 GPIO channels per decoder, 15 total**, wired to the ESP32 in
+this fixed order (`GPIO_PINS[15]` in the firmware) — grouped by physical
+header side on the Waveshare ESP32-S3-ETH for easier wiring:
+
+| Decoder | On-Air | Prod | Error/Manual A | Error/Manual B | Call | Header side |
+|---|---|---|---|---|---|---|
+| 1 | GPIO1 | GPIO2 | GPIO15 | GPIO16 | GPIO17 | Left |
+| 2 | GPIO18 | GPIO21 | GPIO38 | GPIO39 | GPIO40 | Left (18, 21) / Right (38, 39, 40) |
+| 3 | GPIO41 | GPIO42 | GPIO47 | GPIO48 | GPIO43 | Right |
+
+(Decoder 2's first two channels land on the last two free left-side pins
+since the right header only has 9 safe pins total for 10 needed across
+Decoders 2 and 3 combined — see "GPIO pin availability" above for the full
+safe-pin breakdown by side.)
+
+**Name, frequency, and receiver number are editable directly on the
+dashboard card** — typing into any of those fields saves automatically
+after a short pause (no save button, no page reload), stored per-decoder
+against that device's MAC address so it persists across restarts and
+survives the card being re-rendered. The dashboard's background refresh
+(every 3 seconds) only updates LED states and status badges — it never
+touches what you're typing.
+
+### Commissioning a new unit
+
+1. Power it on and let it connect — it'll show up on the dashboard as an
+   *"unregistered"* card along with its MAC address.
+2. Click **"register it"** on that card (or go to `http://<pi-ip>:8080/commission`
    and enter the MAC manually — also printed in Serial Monitor on boot).
-3. Fill in the equipment name, and optionally a location and notes.
-4. Save — the dashboard updates immediately, and the mapping persists across
-   server restarts.
+3. Fill in the equipment name, pick a **card type** from the dropdown (e.g.
+   "1: Talent Pack Decoder", or define a new generic type first via the
+   link on that page), and optionally a location and notes.
+4. Save — the dashboard updates immediately, and both the equipment
+   mapping and card type assignment persist across server restarts.
 
-You can also view/edit/delete existing entries at `/commission`, or pull the
-whole registry as JSON from `/api/registry`.
+You can also view/edit/delete existing entries at `/commission`, view/edit
+card types at `/device-types`, or pull any of this as JSON from
+`/api/registry`, `/api/device-types`, or `/api/devices`.
 
 ## 6. How offline detection works
 
