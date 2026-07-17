@@ -62,17 +62,26 @@ const unsigned long PUBLISH_INTERVAL_MS = 5000;
 #define ETH_SPI_MISO   12
 #define ETH_SPI_MOSI   11
 
-// --- GPIO pins to monitor (12 total) ---
+// --- GPIO pins to monitor (15 total) ---
+// Wired for card type 1, "Talent Pack Decoder": 3 decoder groups of 5
+// channels each (On-Air, Prod, Error/Manual-A, Error/Manual-B, Call), in
+// that fixed order — the dashboard assumes this exact channel ordering,
+// so don't reorder these without also updating TPD_CHANNELS_PER_DECODER
+// logic in gpio_server.py.
+//
 // Chosen to avoid: the Ethernet SPI pins above (9-14), GPIO33-37 (reserved
 // internally for PSRAM on this board's ESP32-S3R8 and NOT usable per
 // Waveshare's own FAQ), the native-USB pins (19/20), and boot-strapping
-// pins (0/3/45/46). If you also plan to use this board's onboard TF card
-// slot (GPIO4-7) or camera header, pick different pins for those signals
-// since they share this same range.
-const uint8_t GPIO_PINS[12] = {
-  1, 2, 4, 5, 6, 7, 8, 15, 16, 17, 18, 21
+// pins (0/3/45/46). GPIO44 is left free as a spare.
+const uint8_t GPIO_PINS[15] = {
+  // Decoder 1: On-Air, Prod, Error/Manual-A, Error/Manual-B, Call
+  1, 2, 15, 16, 17,
+  // Decoder 2: On-Air, Prod, Error/Manual-A, Error/Manual-B, Call
+  18, 21, 38, 39, 40,
+  // Decoder 3: On-Air, Prod, Error/Manual-A, Error/Manual-B, Call
+  41, 42, 47, 48, 43
 };
-const uint8_t NUM_GPIO = 12;
+const uint8_t NUM_GPIO = 15;
 
 // =================================================
 
@@ -89,7 +98,7 @@ PubSubClient mqtt(ethClient);
 SPIClass ethSPI(FSPI);   // dedicated SPI bus for the W5500
 
 unsigned long lastPublish = 0;
-int lastStates[12];
+int lastStates[15];
 
 // WARNING: onEvent is called from a separate FreeRTOS task (thread)!
 void onEvent(arduino_event_id_t event) {
@@ -193,14 +202,14 @@ void publishStates(bool force) {
   }
   if (!changed) return;
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;
   doc["device_id"] = deviceId;
   doc["mac"] = ETH.macAddress();       // used by the Pi to look up equipment name
   doc["ip"] = ETH.localIP().toString();
   JsonArray arr = doc.createNestedArray("gpio");
   for (int i = 0; i < NUM_GPIO; i++) arr.add(lastStates[i]);
 
-  char payload[256];
+  char payload[384];
   size_t n = serializeJson(doc, payload);
 
   mqtt.publish(topicStatus.c_str(), (uint8_t*)payload, n, true); // retained
