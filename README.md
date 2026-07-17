@@ -126,7 +126,7 @@ differently, e.g. `end0` on some Pi models).
    becoming a second, conflicting DHCP server.
 3. **If nothing answers** (an isolated switch with no router, like this
    project was built for): the Pi assigns itself a fixed fallback address
-   (`10.42.0.1/24` by default) and starts serving DHCP itself — but strictly
+   (`192.168.1.99/24` by default) and starts serving DHCP itself — but strictly
    on that one interface/segment, never routed or bridged anywhere else.
 
 **This re-runs automatically**, not just at boot — a NetworkManager
@@ -142,11 +142,14 @@ sudo /opt/gpio-monitor/network-autoconfig.sh eth0
 Logs from the automatic (dispatcher-triggered) runs go to
 `/var/log/gpio-monitor-net.log`.
 
-**Avoiding collisions:** if `10.42.0.0/24` happens to already be in use
-somewhere reachable from this segment, edit `FALLBACK_IP`/`FALLBACK_CIDR`
-near the top of `network-autoconfig.sh` to a range that's clear on your
-network, then re-run it (or push the change to GitHub and re-run
-`install.sh`).
+**Avoiding collisions:** the default fallback range is `192.168.1.0/24`,
+which is worth knowing is *also* the most common default range for
+consumer routers — fine for a genuinely isolated switch with no other
+devices on it, but if there's any chance this segment could later be
+bridged near something else using that same range, edit
+`FALLBACK_IP`/`FALLBACK_CIDR` near the top of `network-autoconfig.sh` to a
+less common range (e.g. `10.42.0.1/24`), then re-run it (or push the change
+to GitHub and re-run `install.sh`).
 
 > **Requires NetworkManager** (the default on Raspberry Pi OS Bookworm and
 > newer). If your Pi uses the older dhcpcd/ifupdown stack instead, the

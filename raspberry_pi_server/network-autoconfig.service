@@ -1,0 +1,13 @@
+[Unit]
+Description=Auto-detect DHCP / fallback for ESP32 GPIO Monitor network
+After=NetworkManager.service
+Wants=NetworkManager.service
+Before=mosquitto.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gpio-monitor/network-autoconfig.sh __TARGET_IFACE__
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
