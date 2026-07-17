@@ -33,15 +33,18 @@ SETUP
 """
 
 import json
+import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
-from flask import Flask, jsonify, render_template_string, request, redirect, url_for
+from flask import Flask, jsonify, render_template_string, request, redirect, url_for, send_file
 
 import registry
 import device_types
+import event_log
 
 # ================= CONFIG =================
 MQTT_BROKER = "localhost"       # broker running on this same Pi
@@ -89,12 +92,15 @@ def on_message(client, userdata, msg):
         if kind == "status":
             try:
                 payload = json.loads(msg.payload.decode())
-                entry["gpio"] = payload.get("gpio")
+                old_gpio = entry.get("gpio")
+                new_gpio = payload.get("gpio")
+                entry["gpio"] = new_gpio
                 entry["ip"] = payload.get("ip")
                 entry["mac"] = payload.get("mac")
                 entry["last_seen"] = now_iso()
                 entry["status"] = "online"
                 entry["equipment"] = registry.get_equipment(entry["mac"])
+                maybe_log_tpd_changes(device_id, entry["mac"], entry["equipment"], old_gpio, new_gpio)
             except json.JSONDecodeError:
                 print(f"Bad payload from {device_id}: {msg.payload!r}")
 
@@ -126,6 +132,35 @@ def stale_checker():
 #   4: Call (red)
 TPD_CHANNELS_PER_DECODER = 5
 TPD_NUM_DECODERS = 3
+
+
+def maybe_log_tpd_changes(device_id, mac, equipment, old_gpio, new_gpio):
+    """Compares the previous and new GPIO readings for a Talent Pack
+    Decoder device and writes a CSV log row for each On-Air/Prod channel
+    that changed state, but only for decoders where the user has checked
+    "Log this path". No-ops entirely for non-TPD devices, and skips the
+    very first reading after startup/reconnect (old_gpio is None) since
+    that's not a real transition, just the initial state becoming known.
+    """
+    if old_gpio is None or not equipment or not equipment.get("device_type"):
+        return
+    type_def = device_types.get_type(equipment["device_type"])
+    if not type_def or type_def.get("layout") != "talent_pack_decoder":
+        return
+
+    stored_decoders = equipment.get("decoders", [])
+    for i in range(TPD_NUM_DECODERS):
+        dec_info = stored_decoders[i] if i < len(stored_decoders) else {}
+        if not dec_info.get("log_enabled"):
+            continue
+        decoder_name = dec_info.get("name") or f"Decoder {i + 1}"
+        base = i * TPD_CHANNELS_PER_DECODER
+        for offset, channel_name in ((0, "on_air"), (1, "prod")):
+            idx = base + offset
+            old_val = old_gpio[idx] if idx < len(old_gpio) else None
+            new_val = new_gpio[idx] if new_gpio and idx < len(new_gpio) else None
+            if old_val is not None and new_val is not None and old_val != new_val:
+                event_log.log_event(device_id, mac, decoder_name, channel_name, new_val)
 
 
 def talent_pack_decoder_view(entry, equipment):
@@ -162,6 +197,7 @@ def talent_pack_decoder_view(entry, equipment):
             "name": text.get("name", ""),
             "frequency": text.get("frequency", ""),
             "receiver": text.get("receiver", ""),
+            "log_enabled": bool(text.get("log_enabled", False)),
         })
 
     return decoders
@@ -215,15 +251,16 @@ def api_device_types():
 
 @app.route("/api/decoder-field", methods=["POST"])
 def api_decoder_field():
-    """Live-save endpoint for a single decoder text field (name/frequency/
-    receiver), called by the dashboard as the user types."""
+    """Live-save endpoint for a single decoder field (name/frequency/
+    receiver/log_enabled), called by the dashboard as the user types or
+    toggles the "log this path" checkbox."""
     payload = request.get_json(silent=True) or {}
     mac = (payload.get("mac") or "").strip()
     decoder_index = payload.get("decoder_index")
     field = (payload.get("field") or "").strip()
     value = payload.get("value", "")
 
-    if not mac or decoder_index is None or field not in ("name", "frequency", "receiver"):
+    if not mac or decoder_index is None or field not in ("name", "frequency", "receiver", "log_enabled"):
         return jsonify({"ok": False, "error": "invalid request"}), 400
 
     updated = registry.set_decoder_field(mac, int(decoder_index), field, value)
@@ -301,6 +338,10 @@ DASHBOARD_HTML = """
     }
     .tpd-fields input.tpd-name { font-weight: 500; }
     .tpd-fields input.tpd-secondary { color: #999; }
+    .tpd-log-toggle {
+      display: flex; align-items: center; gap: 5px; font-size: 10px; color: #888;
+      cursor: pointer; margin-top: 2px;
+    }
     .tpd-leds { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
     .tpd-led { display: flex; flex-direction: column; align-items: center; gap: 3px; }
     .tpd-led .dot { width: 13px; height: 13px; }
@@ -322,6 +363,7 @@ DASHBOARD_HTML = """
   <div class="topbar">
     <a href="/commission">+ Commission a device</a>
     <a href="/device-types">&#9881; Manage card types</a>
+    <a href="/logs">&#128220; View logs</a>
   </div>
   <p class="summary" id="summary">
     <strong id="online-count">{{ online_count }}</strong> of
@@ -375,6 +417,11 @@ DASHBOARD_HTML = """
                      data-mac="{{ d.mac }}" data-decoder-index="{{ dec.index }}" data-field="frequency">
               <input class="tpd-secondary" type="text" placeholder="Receiver" value="{{ dec.receiver }}"
                      data-mac="{{ d.mac }}" data-decoder-index="{{ dec.index }}" data-field="receiver">
+              <label class="tpd-log-toggle">
+                <input type="checkbox" data-mac="{{ d.mac }}" data-decoder-index="{{ dec.index }}"
+                       data-field="log_enabled" {{ 'checked' if dec.log_enabled else '' }}>
+                Log this path
+              </label>
             </div>
             <div class="tpd-leds">
               <div class="tpd-led">
@@ -479,7 +526,7 @@ DASHBOARD_HTML = """
     let saveTimers = {};
     document.getElementById('cards').addEventListener('input', function (e) {
       const el = e.target;
-      if (!el.matches('input[data-field]')) return;
+      if (!el.matches('input[type="text"][data-field]')) return;
       const key = el.dataset.mac + ':' + el.dataset.decoderIndex + ':' + el.dataset.field;
       clearTimeout(saveTimers[key]);
       saveTimers[key] = setTimeout(function () {
@@ -494,6 +541,23 @@ DASHBOARD_HTML = """
           })
         }).catch(function (err) { console.error('decoder-field save failed', err); });
       }, 500);
+    });
+
+    // The "log this path" checkbox saves immediately on toggle — no debounce
+    // needed for a single click, and no reason to wait.
+    document.getElementById('cards').addEventListener('change', function (e) {
+      const el = e.target;
+      if (!el.matches('input[type="checkbox"][data-field="log_enabled"]')) return;
+      fetch('/api/decoder-field', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mac: el.dataset.mac,
+          decoder_index: parseInt(el.dataset.decoderIndex, 10),
+          field: el.dataset.field,
+          value: el.checked
+        })
+      }).catch(function (err) { console.error('log_enabled save failed', err); });
     });
 
     // Background poll: updates LED/status/last-seen only, never touches the
@@ -840,6 +904,102 @@ def device_types_delete():
     return redirect(url_for("device_types_page"))
 
 
+LOGS_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Event Logs</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; background:#111; color:#eee; }
+    a { color: #4caf50; }
+    .layout { display: flex; gap: 2rem; align-items: flex-start; }
+    .dates { min-width: 160px; }
+    .dates ul { list-style: none; padding: 0; margin: 0.5rem 0; }
+    .dates li { margin-bottom: 4px; }
+    .dates a.active { color: #eee; font-weight: bold; }
+    .dates .empty { color: #666; font-size: 0.85rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #444; padding: 6px 10px; text-align: left; font-size: 0.85rem; }
+    th { background: #222; }
+    .state-1 { color: #4caf50; font-weight: bold; }
+    .state-0 { color: #f44336; font-weight: bold; }
+    .content { flex: 1; }
+    .empty-state { color: #777; }
+    .retention-note { color: #666; font-size: 0.8rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <p><a href="/">&larr; back to dashboard</a></p>
+  <h1>Event Logs</h1>
+  <p>On-Air / Prod state changes for any decoder path with "Log this path"
+     checked on its card. One file per day; kept for 30 days automatically.</p>
+
+  <div class="layout">
+    <div class="dates">
+      <strong>Dates</strong>
+      {% if dates|length == 0 %}
+        <p class="empty">No logs yet.</p>
+      {% else %}
+      <ul>
+        {% for d in dates %}
+        <li><a href="/logs?date={{ d }}" class="{{ 'active' if d == selected_date else '' }}">{{ d }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    <div class="content">
+      {% if selected_date %}
+        <p>
+          <strong>{{ selected_date }}</strong> &middot; {{ rows|length }} event(s)
+          &middot; <a href="/logs/download/{{ selected_date }}">Download CSV</a>
+        </p>
+        {% if rows|length == 0 %}
+          <p class="empty-state">No events recorded for this date.</p>
+        {% else %}
+        <table>
+          <tr><th>Time (UTC)</th><th>Equipment</th><th>Decoder</th><th>Channel</th><th>State</th></tr>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.timestamp }}</td>
+            <td>{{ row.device_id }}</td>
+            <td>{{ row.decoder_name }}</td>
+            <td>{{ row.channel }}</td>
+            <td class="state-{{ row.state }}">{{ 'ON' if row.state == '1' else 'OFF' }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+      {% else %}
+        <p class="empty-state">Select a date to view its events.</p>
+      {% endif %}
+      <p class="retention-note">Log files older than 30 days are deleted automatically.</p>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.route("/logs")
+def logs_page():
+    selected_date = request.args.get("date", "")
+    dates = event_log.list_log_files()
+    rows = event_log.read_log_file(selected_date) if selected_date else []
+    return render_template_string(
+        LOGS_HTML, dates=dates, selected_date=selected_date, rows=rows
+    )
+
+
+@app.route("/logs/download/<date_str>")
+def logs_download(date_str):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        return "Invalid date", 400
+    path = event_log.log_file_path(date_str)
+    if not path:
+        return "Log file not found", 404
+    return send_file(path, as_attachment=True, download_name=f"gpio-events-{date_str}.csv")
+
+
 def start_mqtt():
     client = mqtt.Client()
     client.on_connect = on_connect
@@ -852,4 +1012,5 @@ def start_mqtt():
 if __name__ == "__main__":
     start_mqtt()
     threading.Thread(target=stale_checker, daemon=True).start()
+    event_log.start_cleanup_thread()
     app.run(host="0.0.0.0", port=WEB_PORT)

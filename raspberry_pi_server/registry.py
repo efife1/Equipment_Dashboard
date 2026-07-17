@@ -69,11 +69,12 @@ def upsert(mac: str, name: str, location: str = "", notes: str = "", device_type
     return data[mac]
 
 
-def set_decoder_field(mac: str, decoder_index: int, field: str, value: str):
-    """Live-edit a single field (name/frequency/receiver) for one decoder
-    group on a commissioned device, without touching anything else on its
-    registry entry. Used by the dashboard's inline-editable card fields."""
-    if field not in ("name", "frequency", "receiver"):
+def set_decoder_field(mac: str, decoder_index: int, field: str, value):
+    """Live-edit a single field (name/frequency/receiver/log_enabled) for
+    one decoder group on a commissioned device, without touching anything
+    else on its registry entry. Used by the dashboard's inline-editable
+    card fields and the "log this path" checkbox."""
+    if field not in ("name", "frequency", "receiver", "log_enabled"):
         raise ValueError(f"Unknown decoder field: {field}")
     mac = _normalize_mac(mac)
     with _lock:
@@ -82,7 +83,7 @@ def set_decoder_field(mac: str, decoder_index: int, field: str, value: str):
             return None
         decoders = data[mac].setdefault("decoders", [])
         while len(decoders) <= decoder_index:
-            decoders.append({"name": "", "frequency": "", "receiver": ""})
+            decoders.append({"name": "", "frequency": "", "receiver": "", "log_enabled": False})
         decoders[decoder_index][field] = value
         data[mac]["updated_at"] = datetime.now(timezone.utc).isoformat()
         _save(data)

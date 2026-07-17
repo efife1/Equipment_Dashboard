@@ -284,6 +284,24 @@ survives the card being re-rendered. The dashboard's background refresh
 (every 3 seconds) only updates LED states and status badges — it never
 touches what you're typing.
 
+**Event logging:** each decoder path has a "Log this path" checkbox. When
+checked, every On-Air/Prod state change on that specific path is written
+to a CSV file — one file per calendar day, automatically deleted once
+30 days old. Nothing is logged for a path unless its checkbox is checked.
+View or download logs at `http://<pi-ip>:8080/logs`, which lists available
+dates and shows timestamp, equipment, decoder name, channel, and state
+(ON/OFF) for whichever day you select — or grab the raw CSV via the
+download link on that page.
+
+### Dashboard display controls
+
+Two per-browser display preferences (remembered via the browser, not
+shared server-side): a **"Hide offline devices"** checkbox in the filter
+bar hides any card that isn't currently online, and every card has a small
+**×** button to hide that specific card manually — a "N card(s) manually
+hidden — show all" link appears whenever any are hidden, so nothing's
+permanently lost.
+
 ### Commissioning a new unit
 
 1. Power it on and let it connect — it'll show up on the dashboard as an
