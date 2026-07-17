@@ -11,6 +11,23 @@ runs the MQTT broker plus a web dashboard showing each unit as a card.
 [ESP32 #N] --Ethernet/DHCP--/
 ```
 
+## Project structure
+
+```
+esp32_firmware/
+  _template/                          <- copy this to create a new device type
+  device_type_1_talent_pack_decoder/  <- see the dedicated section below
+raspberry_pi_server/                  <- the Pi's MQTT broker + dashboard (shared by every device type)
+docs/
+  ESP32-S3-ETH_Pinout.md              <- full board pinout reference
+  talent_pack_decoder_card.svg        <- card render used in this README
+```
+
+Every device type shares the exact same networking/MQTT/discovery firmware
+and the exact same Pi-side backend — adding a new one is mostly a matter of
+picking pins and, optionally, a card layout. See
+`esp32_firmware/_template/README.md` for the full workflow.
+
 ## 1. Raspberry Pi setup
 
 ### Quick install (recommended)
@@ -158,24 +175,27 @@ network, then re-run it (or push the change to GitHub and re-run
 
 1. In Arduino IDE, install board support: **Boards Manager → esp32 (Espressif Systems)**, version 2.0.12+.
 2. Install libraries: **PubSubClient** and **ArduinoJson** (Library Manager). (**ESPmDNS** and **SPI** ship with the ESP32 core, no separate install needed.)
-3. Open `esp32_gpio_client/esp32_gpio_client.ino`.
+3. Open the `.ino` for the device type you're flashing — e.g.
+   `esp32_firmware/device_type_1_talent_pack_decoder/esp32_gpio_client.ino`
+   for a Talent Pack Decoder unit. (Building a new device type? Start from
+   `esp32_firmware/_template/` instead — see its `README.md`.)
 4. Board settings — this firmware targets the **Waveshare ESP32-S3-ETH** (onboard W5500 Ethernet over SPI):
    - **Tools → Board → esp32 → "ESP32S3 Dev Module"** (not plain "ESP32 Dev Module" — picking the wrong one causes an upload error like `This chip is ESP32-S3, not ESP32`)
    - **Tools → USB CDC On Boot → Enabled** (needed for Serial Monitor over this board's USB-C port)
-5. Edit the **USER CONFIG** section at the top:
-   - `GPIO_PINS[15]` → currently wired for **card type 1, "Talent Pack
-     Decoder"**: 3 decoder groups of 5 channels each (On-Air, Prod,
-     Error/Manual-A, Error/Manual-B, Call), in that fixed order — see
-     "Card types" below for the full pin table and what each channel means.
-     Don't reorder these without also updating the matching logic in
-     `gpio_server.py`.
-   - No broker address needed — it's discovered automatically via mDNS (see below).
-6. Upload — this same firmware/config works unmodified on every unit, since nothing device- or network-specific is hardcoded.
+5. The **GPIO_PINS** array near the top is already set correctly for
+   whichever device type's folder you opened — no broker address needed
+   either, since it's discovered automatically via mDNS (see below).
+6. Upload — this same firmware/config works unmodified on every unit *of
+   that device type*, since nothing device- or network-specific is
+   hardcoded (a Talent Pack Decoder unit and, say, a future "Pump Station"
+   unit would run different `.ino` files, but many identical Talent Pack
+   Decoder units all run the exact same one).
 7. Open Serial Monitor (115200 baud) to confirm it gets a DHCP address, finds the broker, and connects to MQTT.
 
-Repeat for each unit — no code changes needed between units beyond confirming
-the board type; each one auto-generates a unique device ID from its MAC
-address (or set `DEVICE_NAME` for a fixed human-readable name instead).
+Repeat for each unit — no code changes needed between units of the same
+device type beyond confirming the board type; each one auto-generates a
+unique device ID from its MAC address (or set `DEVICE_NAME` for a fixed
+human-readable name instead).
 
 ### GPIO pin availability
 
@@ -190,14 +210,15 @@ Waveshare's own FAQ, not usable regardless of what other pinout charts
 show), GPIO19/20 are the native-USB D-/D+ pins, and GPIO0/3/45/46 are
 boot-strapping pins best avoided (GPIO45 especially, since it selects the
 flash's operating voltage at boot). That leaves about 16 pins that are
-genuinely safe to use, split by physical header side on this board:
+genuinely safe to use, split by physical header side on this board (see
+`docs/ESP32-S3-ETH_Pinout.md` for the complete reference):
 
 - **Left header:** 1, 2, 15, 16, 17, 18, 21
 - **Right header:** 38, 39, 40, 41, 42, 43, 44, 47, 48
 
-The current `GPIO_PINS[15]` wiring uses all 7 left-side pins for Decoder 1
-(only 5 needed, 2 spare) and 8 of the 9 right-side pins across Decoders 2
-and 3 (1 spare on the right). If you plan to also use this board's onboard
+The Talent Pack Decoder's `GPIO_PINS` wiring uses all 7 left-side pins for
+Decoder 1 (only 5 needed, 2 spare) and 8 of the 9 right-side pins across
+Decoders 2 and 3 (1 spare on the right). If you plan to also use this board's onboard
 TF card slot (GPIO4–7) or camera header, those need different signal pins
 entirely, since this project's channels don't currently use that range.
 
@@ -250,48 +271,11 @@ channel (e.g. *"Pump Running"* instead of *"GPIO 0"*). A device with no
 type assigned still works fine — its card just falls back to generic
 "GPIO 0", "GPIO 1", etc. Manage all types at `http://<pi-ip>:8080/device-types`.
 
-### Card type 1: Talent Pack Decoder (built-in special layout)
-
-Slot 1 is auto-seeded on first run as a bespoke card layout (not the
-generic label grid) for monitoring 3 broadcast decoder units on one card.
-Each decoder shows:
-- **Two live-editable text fields**: name and frequency (a third,
-  receiver, is stored per-decoder too — see below)
-- **4 LED indicators**: On-Air (green), Prod (yellow), a two-way
-  Error/Manual indicator (red = Error, blue = Manual, using 2 GPIO pins),
-  and Call (red)
-
-This needs **5 GPIO channels per decoder, 15 total**, wired to the ESP32 in
-this fixed order (`GPIO_PINS[15]` in the firmware) — grouped by physical
-header side on the Waveshare ESP32-S3-ETH for easier wiring:
-
-| Decoder | On-Air | Prod | Error/Manual A | Error/Manual B | Call | Header side |
-|---|---|---|---|---|---|---|
-| 1 | GPIO1 | GPIO2 | GPIO15 | GPIO16 | GPIO17 | Left |
-| 2 | GPIO18 | GPIO21 | GPIO38 | GPIO39 | GPIO40 | Left (18, 21) / Right (38, 39, 40) |
-| 3 | GPIO41 | GPIO42 | GPIO47 | GPIO48 | GPIO43 | Right |
-
-(Decoder 2's first two channels land on the last two free left-side pins
-since the right header only has 9 safe pins total for 10 needed across
-Decoders 2 and 3 combined — see "GPIO pin availability" above for the full
-safe-pin breakdown by side.)
-
-**Name, frequency, and receiver number are editable directly on the
-dashboard card** — typing into any of those fields saves automatically
-after a short pause (no save button, no page reload), stored per-decoder
-against that device's MAC address so it persists across restarts and
-survives the card being re-rendered. The dashboard's background refresh
-(every 3 seconds) only updates LED states and status badges — it never
-touches what you're typing.
-
-**Event logging:** each decoder path has a "Log this path" checkbox. When
-checked, every On-Air/Prod state change on that specific path is written
-to a CSV file — one file per calendar day, automatically deleted once
-30 days old. Nothing is logged for a path unless its checkbox is checked.
-View or download logs at `http://<pi-ip>:8080/logs`, which lists available
-dates and shows timestamp, equipment, decoder name, channel, and state
-(ON/OFF) for whichever day you select — or grab the raw CSV via the
-download link on that page.
+Slot 1 is reserved for the built-in **Talent Pack Decoder** layout — see
+its own dedicated section below for what it looks like and how it works.
+Any other slot you define uses the generic layout described above unless
+you add a bespoke renderer for it (see
+`esp32_firmware/_template/README.md` for that workflow).
 
 ### Dashboard display controls
 
@@ -318,7 +302,61 @@ You can also view/edit/delete existing entries at `/commission`, view/edit
 card types at `/device-types`, or pull any of this as JSON from
 `/api/registry`, `/api/device-types`, or `/api/devices`.
 
-## 6. How offline detection works
+## 6. Device Type 1: Talent Pack Decoder
+
+![Talent Pack Decoder card](docs/talent_pack_decoder_card.svg)
+
+The Talent Pack Decoder card monitors 3 broadcast decoder units at once,
+each shown as its own panel on the card. It's the one built-in "special"
+card layout in this project (every other card type uses the simpler
+generic per-GPIO label grid described above).
+
+**What each part does:**
+
+- **Name / Frequency / Receiver fields** — three free-text fields per
+  decoder, editable right on the card. Type into any of them and it saves
+  automatically after a brief pause — no save button, no page reload.
+  These are per-decoder labels you assign (e.g. talent name, station
+  frequency, receiver number); they're not read from the hardware.
+- **On-Air LED (green)** — lit when that decoder's On-Air input is active.
+- **Prod LED (yellow)** — lit when that decoder's Prod input is active.
+- **Error/Manual LED (two-way)** — a single indicator driven by 2 GPIO
+  pins: lights **red for Error**, **blue for Manual**, or stays dark if
+  neither is asserted.
+- **Call LED (red)** — lit when that decoder's Call input is active.
+- **"Log this path" checkbox** — sits below the LEDs. When checked, every
+  On-Air/Prod state change on that specific decoder is written to a daily
+  CSV log (see "Event logging" below). Unchecked by default — nothing is
+  logged unless you opt in.
+
+All LED states update live via the dashboard's background poll (every 3
+seconds) without ever interrupting whatever you're typing into the text
+fields above them.
+
+**Wiring:** 5 GPIO channels per decoder, 15 total, in this fixed order
+(`GPIO_PINS[]` in
+`esp32_firmware/device_type_1_talent_pack_decoder/esp32_gpio_client.ino`)
+— grouped by physical header side on the Waveshare ESP32-S3-ETH for easier
+wiring:
+
+| Decoder | On-Air | Prod | Error/Manual A | Error/Manual B | Call | Header side |
+|---|---|---|---|---|---|---|
+| 1 | GPIO1 | GPIO2 | GPIO15 | GPIO16 | GPIO17 | Left |
+| 2 | GPIO18 | GPIO21 | GPIO38 | GPIO39 | GPIO40 | Left (18, 21) / Right (38, 39, 40) |
+| 3 | GPIO41 | GPIO42 | GPIO47 | GPIO48 | GPIO43 | Right |
+
+(Decoder 2's first two channels land on the last two free left-side pins
+since the right header only has 9 safe pins total for 10 needed across
+Decoders 2 and 3 combined — see "GPIO pin availability" above for the full
+safe-pin breakdown by side.)
+
+**Event logging:** view or download logs at `http://<pi-ip>:8080/logs`,
+which lists available dates and shows timestamp, equipment, decoder name,
+channel, and state (ON/OFF) for whichever day you select — or grab the raw
+CSV via the download link on that page. One file per calendar day, kept
+for 30 days automatically before being deleted.
+
+## 7. How offline detection works
 
 - Each ESP32 sets an MQTT **Last Will** message (`offline`) that the broker
   publishes automatically if the connection drops uncleanly.
@@ -328,7 +366,7 @@ card types at `/device-types`, or pull any of this as JSON from
   heard from it in `STALE_TIMEOUT_SEC` (default 30s) — a backstop in case a
   device loses power abruptly and the LWT doesn't arrive in time.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 **`sudo: ./install.sh: command not found`** — run `sudo bash install.sh`
 instead. Files uploaded through GitHub's web interface lose their
@@ -338,7 +376,7 @@ regardless of permissions.
 
 **Wrong content after cloning / unexpected service name in the install
 output** — double check `github.com/efife1/Equipment_Dashboard` actually
-contains this project's files (an `esp32_gpio_client/` folder and a
+contains this project's files (an `esp32_firmware/` folder and a
 `raspberry_pi_server/` folder with `gpio_server.py`, `install.sh`, etc. in
 it) before running the installer. If the repo was previously used for
 something else, clear out any stale install first:

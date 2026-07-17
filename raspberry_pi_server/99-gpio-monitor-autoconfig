@@ -1,0 +1,13 @@
+#!/bin/bash
+# NetworkManager dispatcher hook — re-runs the DHCP-presence check whenever
+# the target interface comes up or its connectivity state changes (e.g. the
+# Pi gets moved to a different network, or the cable is unplugged/replugged).
+# Installed by install.sh into /etc/NetworkManager/dispatcher.d/
+
+IFACE="$1"
+ACTION="$2"
+TARGET_IFACE="__TARGET_IFACE__"
+
+if [ "$IFACE" = "$TARGET_IFACE" ] && { [ "$ACTION" = "up" ] || [ "$ACTION" = "connectivity-change" ]; }; then
+  /opt/gpio-monitor/network-autoconfig.sh "$TARGET_IFACE" >> /var/log/gpio-monitor-net.log 2>&1
+fi

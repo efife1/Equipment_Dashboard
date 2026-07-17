@@ -1,0 +1,21 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  Advertises this Pi's MQTT broker via mDNS/Zeroconf so ESP32 clients can
+  find it automatically as "_mqtt._tcp" without a hardcoded IP address.
+
+  INSTALL:
+    sudo cp mqtt.service /etc/avahi/services/mqtt.service
+    sudo systemctl restart avahi-daemon
+
+  VERIFY (from another machine on the network):
+    avahi-browse -r _mqtt._tcp      (Linux)
+    dns-sd -B _mqtt._tcp            (macOS)
+-->
+<service-group>
+  <name replace-wildcards="yes">MQTT Broker on %h</name>
+  <service>
+    <type>_mqtt._tcp</type>
+    <port>1883</port>
+  </service>
+</service-group>
