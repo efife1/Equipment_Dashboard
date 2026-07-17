@@ -516,30 +516,35 @@ COMMISSION_HTML = """
 </head>
 <body>
   <p><a href="/">&larr; back to dashboard</a></p>
-  <h1>Commission a Device</h1>
+  <h1>{% if prefill_entry %}Edit Device{% else %}Commission a Device{% endif %}</h1>
   <p>Enter the ESP32's MAC address (printed in Serial Monitor on boot, or
      visible on the dashboard once it has connected at least once), the
      equipment it's attached to, and which card type it should use.</p>
   <form method="POST" action="/commission">
     <label>MAC Address
-      <input type="text" name="mac" placeholder="AA:BB:CC:DD:EE:FF" value="{{ prefill_mac or '' }}" required>
+      <input type="text" name="mac" placeholder="AA:BB:CC:DD:EE:FF" value="{{ prefill_mac or '' }}"
+             {{ 'readonly' if prefill_entry else '' }} required>
+      {% if prefill_entry %}<small style="color:#888;">Editing existing device &mdash; MAC can't be changed here (it's the record's key). Delete and re-commission if it needs to change.</small>{% endif %}
     </label>
     <label>Equipment Name
-      <input type="text" name="name" placeholder="e.g. Compressor Panel 3" required>
+      <input type="text" name="name" placeholder="e.g. Compressor Panel 3"
+             value="{{ prefill_entry.name if prefill_entry else '' }}" required>
     </label>
     <label>Card Type
       <select name="device_type">
         <option value="">-- none (generic GPIO labels) --</option>
         {% for tid, t in types.items()|sort(attribute='0', attribute_type='int') %}
-        <option value="{{ tid }}">{{ tid }}: {{ t.name }}</option>
+        <option value="{{ tid }}" {{ 'selected' if prefill_entry and prefill_entry.device_type == tid else '' }}>{{ tid }}: {{ t.name }}</option>
         {% endfor %}
       </select>
     </label>
     <label>Location (optional)
-      <input type="text" name="location" placeholder="e.g. Building 2, Rack 4">
+      <input type="text" name="location" placeholder="e.g. Building 2, Rack 4"
+             value="{{ prefill_entry.location if prefill_entry else '' }}">
     </label>
     <label>Notes (optional)
-      <input type="text" name="notes" placeholder="e.g. LED 7 = fault indicator">
+      <input type="text" name="notes" placeholder="e.g. LED 7 = fault indicator"
+             value="{{ prefill_entry.notes if prefill_entry else '' }}">
     </label>
     <button type="submit">Save</button>
   </form>
@@ -557,6 +562,7 @@ COMMISSION_HTML = """
       <td>{{ e.notes or "-" }}</td>
       <td>{{ e.commissioned_at }}</td>
       <td>
+        <a href="/commission?mac={{ mac }}">Edit</a> &middot;
         <form class="inline" method="POST" action="/commission/delete">
           <input type="hidden" name="mac" value="{{ mac }}">
           <button type="submit" onclick="return confirm('Remove this entry?')">Delete</button>
@@ -573,11 +579,13 @@ COMMISSION_HTML = """
 @app.route("/commission", methods=["GET"])
 def commission_form():
     prefill_mac = request.args.get("mac", "")
+    prefill_entry = registry.get_equipment(prefill_mac) if prefill_mac else None
     return render_template_string(
         COMMISSION_HTML,
         reg=registry.get_all(),
         types=device_types.get_all(),
         prefill_mac=prefill_mac,
+        prefill_entry=prefill_entry,
     )
 
 

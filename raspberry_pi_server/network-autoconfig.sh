@@ -29,7 +29,7 @@
 # EDIT THESE if you need the fallback address to avoid colliding
 # with something specific on your network:
 # ============================================================
-FALLBACK_IP="192.168.1.99"
+FALLBACK_IP="10.42.0.1"
 FALLBACK_CIDR="24"
 # ============================================================
 
