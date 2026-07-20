@@ -90,6 +90,11 @@ fi
 
 echo
 echo "==> [3/9] Configuring Mosquitto to listen on all interfaces..."
+# NOTE: allow_anonymous true means any device on this network can publish/
+# subscribe to the broker, with no username/password. This is a deliberate
+# trade-off for an isolated equipment network, not an oversight — if this
+# Pi's Ethernet segment could ever be reachable from an untrusted network,
+# add MQTT authentication (mosquitto_passwd + password_file) before that.
 cat > /etc/mosquitto/conf.d/gpio-monitor.conf << 'EOF'
 listener 1883 0.0.0.0
 allow_anonymous true

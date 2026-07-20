@@ -13,6 +13,13 @@ The dashboard polls for state in the background via JS (not a full-page
 meta-refresh), so inline-editable card fields (e.g. decoder name/frequency/
 receiver) aren't interrupted by a periodic reload.
 
+SECURITY NOTE: there is no authentication anywhere in this app (dashboard,
+commission page, or the MQTT broker it talks to) — every route and API
+endpoint is open to anyone who can reach this Pi on the network. This is a
+deliberate trade-off for an isolated equipment network, not an oversight.
+Don't expose this Pi's web port or MQTT port beyond that isolated network
+without adding auth first.
+
 SETUP
 -----
 1) Install and start an MQTT broker on this Pi:
@@ -53,8 +60,10 @@ MQTT_STATUS_TOPIC = "gpio/+/status"
 MQTT_LWT_TOPIC = "gpio/+/lwt"
 STALE_TIMEOUT_SEC = 30           # mark a device offline if silent this long
 WEB_PORT = 8080
-NUM_GPIO_GENERIC = 12            # channel count for the generic card layout
-# ============================================
+# Generic-layout channel count and max type-slot count live in
+# device_types.py (the single source of truth) — imported below rather
+# than redefined here, so the two files can never drift out of sync.
+# ============================================================
 
 app = Flask(__name__)
 devices = {}
@@ -79,6 +88,15 @@ def on_message(client, userdata, msg):
         return
     device_id, kind = parts[1], parts[2]   # "status" or "lwt"
 
+    # NOTE: this holds devices_lock for the whole handler below, including
+    # the registry.get_equipment() file read and (if a logged decoder path
+    # changed) the event_log.log_event() CSV write inside
+    # maybe_log_tpd_changes(). That means slow disk I/O here also blocks
+    # every other MQTT message and every web request that needs
+    # devices_lock (dashboard poll, /api/devices, etc.) for as long as it
+    # takes. Acceptable at the device counts this project targets — a
+    # handful of units publishing every few seconds — but worth knowing if
+    # this ever scales to many dozens of units or a much slower disk.
     with devices_lock:
         entry = devices.setdefault(device_id, {
             "mac": None,
@@ -227,7 +245,7 @@ def card_view(entry):
         view["decoders"] = talent_pack_decoder_view(entry, equipment)
     else:
         labels = type_def["gpio_labels"] if type_def else device_types.default_labels()
-        gpio_values = entry.get("gpio") or [None] * NUM_GPIO_GENERIC
+        gpio_values = entry.get("gpio") or [None] * device_types.NUM_GPIO
         view["channels"] = list(zip(labels, gpio_values))
 
     return view
@@ -236,7 +254,8 @@ def card_view(entry):
 @app.route("/api/devices")
 def api_devices():
     with devices_lock:
-        return jsonify(devices)
+        snapshot = dict(devices)
+    return jsonify(snapshot)
 
 
 @app.route("/api/registry")
@@ -263,7 +282,12 @@ def api_decoder_field():
     if not mac or decoder_index is None or field not in ("name", "frequency", "receiver", "log_enabled"):
         return jsonify({"ok": False, "error": "invalid request"}), 400
 
-    updated = registry.set_decoder_field(mac, int(decoder_index), field, value)
+    try:
+        decoder_index = int(decoder_index)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "decoder_index must be an integer"}), 400
+
+    updated = registry.set_decoder_field(mac, decoder_index, field, value)
     if updated is None:
         return jsonify({"ok": False, "error": "unknown device"}), 404
 
@@ -371,6 +395,7 @@ DASHBOARD_HTML = """
   </p>
   <div class="filter-bar">
     <label><input type="checkbox" id="hide-offline-toggle"> Hide offline devices</label>
+    <span id="visible-count-note"></span>
     <a id="show-hidden-link" style="display:none;" onclick="showAllHidden()"></a>
   </div>
 
@@ -493,15 +518,25 @@ DASHBOARD_HTML = """
     function applyFilters() {
       const hideOffline = document.getElementById('hide-offline-toggle').checked;
       const hidden = getHiddenSet();
+      const allCards = document.querySelectorAll('.card');
       let visibleShown = 0;
 
-      document.querySelectorAll('.card').forEach(function (card) {
+      allCards.forEach(function (card) {
         const id = card.dataset.deviceId;
         const status = card.dataset.status;
         const manuallyHidden = hidden.has(id);
         const offlineHidden = hideOffline && status !== 'online';
-        card.classList.toggle('card-hidden', manuallyHidden || offlineHidden);
+        const isHidden = manuallyHidden || offlineHidden;
+        card.classList.toggle('card-hidden', isHidden);
+        if (!isHidden) visibleShown++;
       });
+
+      const note = document.getElementById('visible-count-note');
+      if (visibleShown < allCards.length) {
+        note.textContent = 'Showing ' + visibleShown + ' of ' + allCards.length + '.';
+      } else {
+        note.textContent = '';
+      }
 
       const link = document.getElementById('show-hidden-link');
       if (hidden.size > 0) {
@@ -801,7 +836,7 @@ DEVICE_TYPES_HTML = """
 
   <table>
     <tr><th>#</th><th>Name</th><th>Color</th><th>Layout</th><th></th></tr>
-    {% for i in range(1, 33) %}
+    {% for i in range(1, max_types + 1) %}
     {% set tid = i|string %}
     {% set t = types.get(tid) %}
     <tr>
@@ -811,11 +846,16 @@ DEVICE_TYPES_HTML = """
         <td><span class="swatch" style="background:{{ t.color }}"></span> {{ t.color }}</td>
         <td>{{ t.layout if t.layout and t.layout != "generic" else "generic (per-GPIO labels)" }}</td>
         <td>
-          <a href="/device-types?edit={{ tid }}">Edit</a> &middot;
-          <form class="inline" method="POST" action="/device-types/delete">
-            <input type="hidden" name="type_id" value="{{ tid }}">
-            <button type="submit" onclick="return confirm('Delete this card type? Devices using it will fall back to generic GPIO labels.')">Delete</button>
-          </form>
+          <a href="/device-types?edit={{ tid }}">Edit</a>
+          {% if t.layout and t.layout != "generic" %}
+            &middot; <span style="color:#666;" title="Built-in layout — can't be deleted">built-in</span>
+          {% else %}
+            &middot;
+            <form class="inline" method="POST" action="/device-types/delete">
+              <input type="hidden" name="type_id" value="{{ tid }}">
+              <button type="submit" onclick="return confirm('Delete this card type? Devices using it will fall back to generic GPIO labels.')">Delete</button>
+            </form>
+          {% endif %}
         </td>
       {% else %}
         <td class="empty-row" colspan="2">&mdash; empty slot &mdash;</td>
@@ -843,7 +883,7 @@ DEVICE_TYPES_HTML = """
       </label>
       {% if not edit_type or not edit_type.layout or edit_type.layout == "generic" %}
       <div class="label-grid">
-        {% for i in range(12) %}
+        {% for i in range(num_gpio_generic) %}
         <label>GPIO {{ i }} label
           <input type="text" name="label_{{ i }}"
                  value="{{ edit_type.gpio_labels[i] if edit_type else '' }}"
@@ -870,6 +910,8 @@ def device_types_page():
         types=device_types.get_all(),
         edit_id=edit_id,
         edit_type=edit_type,
+        max_types=device_types.MAX_TYPES,
+        num_gpio_generic=device_types.NUM_GPIO,
     )
 
 
@@ -883,7 +925,8 @@ def device_types_save():
     layout = existing["layout"] if existing and "layout" in existing else "generic"
 
     if layout == "generic":
-        labels = [request.form.get(f"label_{i}", "").strip() or f"GPIO {i}" for i in range(12)]
+        labels = [request.form.get(f"label_{i}", "").strip() or f"GPIO {i}"
+                  for i in range(device_types.NUM_GPIO)]
     else:
         labels = existing.get("gpio_labels", device_types.default_labels())
 
@@ -900,7 +943,15 @@ def device_types_save():
 def device_types_delete():
     type_id = request.form.get("type_id", "").strip()
     if type_id:
-        device_types.delete(type_id)
+        existing = device_types.get_type(type_id)
+        if existing and existing.get("layout", "generic") != "generic":
+            # Built-in special layouts (e.g. talent_pack_decoder) render via
+            # bespoke code, not just data — deleting the type definition
+            # would silently break every device using it until the next
+            # service restart re-seeds it. Block deletion entirely instead.
+            print(f"Refused to delete built-in type {type_id} (layout={existing.get('layout')})")
+        else:
+            device_types.delete(type_id)
     return redirect(url_for("device_types_page"))
 
 
@@ -1013,4 +1064,8 @@ if __name__ == "__main__":
     start_mqtt()
     threading.Thread(target=stale_checker, daemon=True).start()
     event_log.start_cleanup_thread()
-    app.run(host="0.0.0.0", port=WEB_PORT)
+    # threaded=True: without it, Flask's dev server handles one request at a
+    # time — a single slow request (e.g. a registry file write) would block
+    # every other browser's dashboard poll until it finished. Fine for the
+    # scale this project runs at either way, but costs nothing to enable.
+    app.run(host="0.0.0.0", port=WEB_PORT, threaded=True)

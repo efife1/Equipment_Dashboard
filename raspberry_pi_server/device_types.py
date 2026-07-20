@@ -34,8 +34,11 @@ def _load():
 
 
 def _save(data):
-    with open(TYPES_FILE, "w") as f:
+    # Atomic write — see registry.py's _save() for why this matters.
+    tmp_path = TYPES_FILE + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp_path, TYPES_FILE)
 
 
 def get_all():

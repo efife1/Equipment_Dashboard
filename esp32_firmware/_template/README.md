@@ -54,3 +54,20 @@ DHCP, mDNS/DNS broker discovery, MQTT connect/reconnect/Last-Will, the
 commissioning registry, offline detection, and (for custom layouts that
 want it) the live-save and event-logging infrastructure — all of that is
 shared, generic, and already working.
+
+## A known trade-off with this pattern
+
+Because Arduino sketches don't have a clean way to share code between
+`.ino` files without setting up a proper Arduino library, every device
+type's networking/MQTT/discovery code is a **copy**, not a shared include.
+That means if a bug is ever found in that shared logic (e.g. in
+`discoverBroker()` or `mqttReconnect()`), it has to be fixed by hand in
+every `device_type_N_.../esp32_gpio_client.ino` file individually — there's
+no single place to patch once and have it apply everywhere.
+
+This is fine at a handful of device types. If this project ever grows to
+many device types that all need to be kept in lockstep, it's worth
+refactoring the shared code into an actual Arduino library (a `.h`/`.cpp`
+pair installed alongside the sketch) that every device type's `.ino`
+includes rather than copies — a bigger change, but worth it past a certain
+scale.

@@ -28,8 +28,15 @@ def _load():
 
 
 def _save(data):
-    with open(REGISTRY_FILE, "w") as f:
+    # Atomic write: write to a temp file in the same directory, then rename
+    # over the real file. os.replace() is atomic on POSIX, so a crash or
+    # power loss mid-write leaves the original file intact rather than
+    # truncated/corrupted — a truncated JSON file would otherwise silently
+    # read back as {} (see _load()), losing every commissioned device.
+    tmp_path = REGISTRY_FILE + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp_path, REGISTRY_FILE)
 
 
 def get_all():
