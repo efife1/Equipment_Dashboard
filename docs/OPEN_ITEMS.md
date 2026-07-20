@@ -22,13 +22,21 @@ to these before ordering parts or submitting any board for fabrication.
 
 ## Talent Pack Decoder specific
 
-- [ ] **Confirm the actual LED tap voltage level** on real Talent Pack
-      Decoder hardware. The original design assumed 3.3V logic-compatible
-      signals since no divider was ever built for this device type — if
-      any tap point actually reads higher than ~3.6V, it will damage the
-      ESP32 GPIO pin. Verify with a multimeter before wiring in, and add
-      a divider (same technique as the Fiber Drawer boards) for any tap
-      that reads too high. See `talent_pack_decoder_schematic.md`.
+- [x] **LED tap voltage protection — RESOLVED (design decision).** Actual
+      tap voltage was never confirmed on real hardware, so rather than
+      wait on a measurement, all 15 channels now use a clamp instead of a
+      divider: 2.2kΩ series resistor (tap → GPIO) + 3.3V shunt zener
+      (GPIO node → GND) + 100kΩ pull-down (GPIO node → GND). Design
+      ceiling is a conservative 24V worst case (~9-10mA through the
+      series resistor at clamp, well within a small SOT-23 zener's
+      rating). Unlike a divider, this doesn't require knowing the real
+      voltage in advance — since these are digital on/off reads rather
+      than analog values needing resolution, the clamp passes real
+      signals through close to unattenuated and only engages if the
+      voltage approaches the 24V ceiling. No further hardware
+      verification needed before fabrication. Update
+      `talent_pack_decoder_schematic.md` and `talent_pack_decoder_bom.md`
+      with the per-channel resistor/zener/pull-down (15x each).
 
 ## 8 Path Fiber Drawer specific
 
