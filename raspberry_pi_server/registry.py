@@ -67,6 +67,7 @@ def upsert(mac: str, name: str, location: str = "", notes: str = "", device_type
             "notes": notes,
             "device_type": device_type,
             "decoders": existing.get("decoders", []),
+            "paths": existing.get("paths", []),
             "commissioned_at": existing.get(
                 "commissioned_at", datetime.now(timezone.utc).isoformat()
             ),
@@ -76,25 +77,51 @@ def upsert(mac: str, name: str, location: str = "", notes: str = "", device_type
     return data[mac]
 
 
-def set_decoder_field(mac: str, decoder_index: int, field: str, value):
-    """Live-edit a single field (name/frequency/receiver/log_enabled) for
-    one decoder group on a commissioned device, without touching anything
-    else on its registry entry. Used by the dashboard's inline-editable
-    card fields and the "log this path" checkbox."""
-    if field not in ("name", "frequency", "receiver", "log_enabled"):
-        raise ValueError(f"Unknown decoder field: {field}")
+def _set_group_field(mac: str, list_field: str, group_index: int, field: str, value, default_item: dict):
+    """Shared logic for live-editing one field within one item of a
+    per-device list of sub-groups (e.g. one decoder on a Talent Pack
+    Decoder, or one path on a Fiber Drawer) — pads the list with
+    default_item as needed, updates just the one field, leaves everything
+    else on the registry entry untouched."""
     mac = _normalize_mac(mac)
     with _lock:
         data = _load()
         if mac not in data:
             return None
-        decoders = data[mac].setdefault("decoders", [])
-        while len(decoders) <= decoder_index:
-            decoders.append({"name": "", "frequency": "", "receiver": "", "log_enabled": False})
-        decoders[decoder_index][field] = value
+        items = data[mac].setdefault(list_field, [])
+        while len(items) <= group_index:
+            items.append(dict(default_item))
+        items[group_index][field] = value
         data[mac]["updated_at"] = datetime.now(timezone.utc).isoformat()
         _save(data)
     return data[mac]
+
+
+def set_decoder_field(mac: str, decoder_index: int, field: str, value):
+    """Live-edit a single field (name/frequency/receiver/log_enabled) for
+    one decoder group on a Talent Pack Decoder. Used by the dashboard's
+    inline-editable card fields and the "log this path" checkbox."""
+    if field not in ("name", "frequency", "receiver", "log_enabled"):
+        raise ValueError(f"Unknown decoder field: {field}")
+    return _set_group_field(mac, "decoders", decoder_index, field, value,
+                             {"name": "", "frequency": "", "receiver": "", "log_enabled": False})
+
+
+def set_path_field(mac: str, path_index: int, field: str, value):
+    """Live-edit a single field (name/reference) for one path on a Fiber
+    Drawer. "reference" is normally set via set_path_reference() below
+    (captured from a live reading) rather than typed directly, but both
+    go through the same underlying storage."""
+    if field not in ("name", "reference"):
+        raise ValueError(f"Unknown path field: {field}")
+    return _set_group_field(mac, "paths", path_index, field, value,
+                             {"name": "", "reference": None})
+
+
+def set_path_reference(mac: str, path_index: int, value):
+    """Captures a live reading as the saved reference/baseline for one
+    Fiber Drawer path, so future readings can be compared against it."""
+    return set_path_field(mac, path_index, "reference", value)
 
 
 def delete(mac: str):

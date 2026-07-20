@@ -221,6 +221,55 @@ def talent_pack_decoder_view(entry, equipment):
     return decoders
 
 
+# --- 2 Path Fiber Drawer: fixed 2-channel-per-path layout ---
+# Channel order within each path's 2-channel block: 0: voltage (mW, analog)
+# 1: fault (digital). Voltage is read via a voltage divider on the ESP32
+# side (see esp32_firmware/device_type_2_two_path_fiber_drawer/) and
+# published already converted back to the original 0-20V-range value.
+FD_CHANNELS_PER_PATH = 2
+FD_NUM_PATHS = 2
+# How far a reading can drift from its saved reference before the delta
+# is flagged (colored) as a fluctuation worth noticing, rather than normal
+# noise. Adjust if this doesn't match what "broad fluctuation" means for
+# your fiber runs in practice.
+FD_FLUCTUATION_THRESHOLD = 0.5
+
+
+def fiber_drawer_view(entry, equipment):
+    """Builds the render-ready view for a 2 Path Fiber Drawer card: the
+    live voltage (mW) and fault state per path, paired with that path's
+    live-editable name and saved reference value (from the registry)."""
+    gpio_values = entry.get("gpio") or []
+    stored_paths = (equipment or {}).get("paths", [])
+
+    paths = []
+    for i in range(FD_NUM_PATHS):
+        base = i * FD_CHANNELS_PER_PATH
+        voltage = gpio_values[base] if base < len(gpio_values) else None
+        fault = gpio_values[base + 1] if base + 1 < len(gpio_values) else None
+
+        text = stored_paths[i] if i < len(stored_paths) else {}
+        reference = text.get("reference")
+
+        delta = None
+        flagged = False
+        if reference is not None and voltage is not None:
+            delta = round(voltage - reference, 2)
+            flagged = abs(delta) > FD_FLUCTUATION_THRESHOLD
+
+        paths.append({
+            "index": i,
+            "voltage": voltage,
+            "fault": fault,
+            "name": text.get("name", ""),
+            "reference": reference,
+            "delta": delta,
+            "flagged": flagged,
+        })
+
+    return paths
+
+
 def card_view(entry):
     """Builds the render-ready view for one device's card. Branches to a
     bespoke renderer for special layouts (e.g. talent_pack_decoder);
@@ -243,6 +292,8 @@ def card_view(entry):
 
     if layout == "talent_pack_decoder":
         view["decoders"] = talent_pack_decoder_view(entry, equipment)
+    elif layout == "fiber_drawer_2path":
+        view["paths"] = fiber_drawer_view(entry, equipment)
     else:
         labels = type_def["gpio_labels"] if type_def else device_types.default_labels()
         gpio_values = entry.get("gpio") or [None] * device_types.NUM_GPIO
@@ -297,6 +348,79 @@ def api_decoder_field():
                 entry["equipment"] = registry.get_equipment(entry["mac"])
 
     return jsonify({"ok": True})
+
+
+@app.route("/api/path-field", methods=["POST"])
+def api_path_field():
+    """Live-save endpoint for a single Fiber Drawer path's name field,
+    called by the dashboard as the user types."""
+    payload = request.get_json(silent=True) or {}
+    mac = (payload.get("mac") or "").strip()
+    path_index = payload.get("path_index")
+    field = (payload.get("field") or "").strip()
+    value = payload.get("value", "")
+
+    if not mac or path_index is None or field != "name":
+        return jsonify({"ok": False, "error": "invalid request"}), 400
+
+    try:
+        path_index = int(path_index)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "path_index must be an integer"}), 400
+
+    updated = registry.set_path_field(mac, path_index, field, value)
+    if updated is None:
+        return jsonify({"ok": False, "error": "unknown device"}), 404
+
+    with devices_lock:
+        for entry in devices.values():
+            if entry.get("mac") and entry["mac"].upper() == mac.upper():
+                entry["equipment"] = registry.get_equipment(entry["mac"])
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/path-set-reference", methods=["POST"])
+def api_path_set_reference():
+    """Captures the CURRENT live voltage reading for one Fiber Drawer path
+    and saves it as that path's reference/baseline — the value comes from
+    the server's own live device state, never from user-typed input, so
+    the reference always reflects a real reading at the moment it was set."""
+    payload = request.get_json(silent=True) or {}
+    mac = (payload.get("mac") or "").strip()
+    path_index = payload.get("path_index")
+
+    if not mac or path_index is None:
+        return jsonify({"ok": False, "error": "invalid request"}), 400
+
+    try:
+        path_index = int(path_index)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "path_index must be an integer"}), 400
+
+    with devices_lock:
+        current_voltage = None
+        for entry in devices.values():
+            if entry.get("mac") and entry["mac"].upper() == mac.upper():
+                gpio_values = entry.get("gpio") or []
+                idx = path_index * FD_CHANNELS_PER_PATH
+                if idx < len(gpio_values):
+                    current_voltage = gpio_values[idx]
+                break
+
+    if current_voltage is None:
+        return jsonify({"ok": False, "error": "no live reading available yet for this device"}), 409
+
+    updated = registry.set_path_reference(mac, path_index, current_voltage)
+    if updated is None:
+        return jsonify({"ok": False, "error": "unknown device"}), 404
+
+    with devices_lock:
+        for entry in devices.values():
+            if entry.get("mac") and entry["mac"].upper() == mac.upper():
+                entry["equipment"] = registry.get_equipment(entry["mac"])
+
+    return jsonify({"ok": True, "reference": current_voltage})
 
 
 DASHBOARD_HTML = """
@@ -376,6 +500,27 @@ DASHBOARD_HTML = """
     .dot.led-blue { background: #42a5f5; box-shadow: 0 0 5px #42a5f5; }
     .dot.led-idle { background: #333; }
 
+    .fd-paths { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+    .fd-path { background: #141414; border: 1px solid #2a2a2a; border-radius: 8px; padding: 14px; text-align: center; }
+    .fd-path input.fd-name {
+      width: 100%; background: #1e1e1e; border: 1px solid #333; border-radius: 4px;
+      color: #eee; font-size: 12px; font-weight: 500; padding: 4px 6px; text-align: center;
+      box-sizing: border-box; margin-bottom: 10px;
+    }
+    .fd-reading { font-size: 26px; font-weight: 500; color: #eee; margin-bottom: 2px; }
+    .fd-unit { font-size: 11px; color: #666; margin-bottom: 8px; }
+    .fd-ref-row { font-size: 10.5px; color: #999; margin-bottom: 10px; min-height: 14px; }
+    .fd-ref-row.flagged { color: #f44336; }
+    .fd-ref-row.ok { color: #4caf50; }
+    .fd-set-ref-btn {
+      width: 100%; background: #1e1e1e; border: 1px solid #333; border-radius: 4px;
+      color: #999; font-size: 10px; padding: 5px; cursor: pointer; margin-bottom: 10px;
+    }
+    .fd-set-ref-btn:hover { background: #2a2a2a; color: #eee; }
+    .fd-led { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .fd-led .dot { width: 13px; height: 13px; }
+    .fd-led-label { font-size: 9.5px; color: #999; }
+
     .filter-bar { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1rem; font-size: 0.85rem; color: #aaa; }
     .filter-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
     .filter-bar a { color: #4caf50; cursor: pointer; text-decoration: none; }
@@ -406,7 +551,7 @@ DASHBOARD_HTML = """
   <div class="cards" id="cards">
     {% for id, d in devices.items() %}
     {% set view = card_view(d) %}
-    <div class="card {{ 'card-wide' if view.layout == 'talent_pack_decoder' else '' }}"
+    <div class="card {{ 'card-wide' if view.layout != 'generic' else '' }}"
          style="--accent: {{ view.color }}" data-device-id="{{ id }}" data-status="{{ d.status }}">
       <div class="card-header">
         <div>
@@ -469,6 +614,25 @@ DASHBOARD_HTML = """
           </div>
           {% endfor %}
         </div>
+      {% elif view.layout == "fiber_drawer_2path" %}
+        <div class="fd-paths">
+          {% for p in view.paths %}
+          <div class="fd-path" data-path-index="{{ p.index }}">
+            <input class="fd-name" type="text" placeholder="Name" value="{{ p.name }}"
+                   data-mac="{{ d.mac }}" data-path-index="{{ p.index }}" data-field="name">
+            <div class="fd-reading" data-role="fd-voltage">{{ "%.2f"|format(p.voltage) if p.voltage is not none else "--" }}</div>
+            <div class="fd-unit">mW</div>
+            <div class="fd-ref-row {{ 'flagged' if p.flagged else ('ok' if p.reference is not none else '') }}" data-role="fd-ref-row">
+              {% if p.reference is not none %}Ref {{ "%.2f"|format(p.reference) }} &middot; &Delta; {{ "%+.2f"|format(p.delta) }}{% else %}No reference set{% endif %}
+            </div>
+            <button type="button" class="fd-set-ref-btn" onclick="setReference('{{ d.mac }}', {{ p.index }}, this)">Set reference</button>
+            <div class="fd-led">
+              <div class="dot {{ 'led-red' if p.fault == 1 else 'led-idle' }}" data-role="fd-fault"></div>
+              <div class="fd-led-label">Fault</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
       {% else %}
         <div class="channels">
           {% for label, val in view.channels %}
@@ -490,6 +654,10 @@ DASHBOARD_HTML = """
   </div>
 
   <script>
+    // Sourced from the server's own FD_FLUCTUATION_THRESHOLD (gpio_server.py)
+    // rather than a separately hardcoded value here, so the two can't drift.
+    const FD_FLUCTUATION_THRESHOLD = {{ fd_fluctuation_threshold }};
+
     // ---- Card visibility: hide-offline toggle + per-card manual hide ----
     // Both preferences are per-browser (localStorage), not server-side —
     // "what I want to see on this screen" isn't shared server state.
@@ -556,27 +724,52 @@ DASHBOARD_HTML = """
     document.getElementById('hide-offline-toggle').checked = localStorage.getItem(HIDE_OFFLINE_KEY) === '1';
     applyFilters();
 
-    // Debounced live-save for decoder text fields — fires shortly after the
-    // user stops typing, so it doesn't spam the server on every keystroke.
+    // Debounced live-save for decoder/path text fields — fires shortly
+    // after the user stops typing, so it doesn't spam the server on every
+    // keystroke. Routes to the right endpoint based on which index
+    // attribute is present (decoder vs path).
     let saveTimers = {};
     document.getElementById('cards').addEventListener('input', function (e) {
       const el = e.target;
       if (!el.matches('input[type="text"][data-field]')) return;
-      const key = el.dataset.mac + ':' + el.dataset.decoderIndex + ':' + el.dataset.field;
+      const isPath = el.dataset.pathIndex !== undefined;
+      const indexKey = isPath ? el.dataset.pathIndex : el.dataset.decoderIndex;
+      const endpoint = isPath ? '/api/path-field' : '/api/decoder-field';
+      const indexField = isPath ? 'path_index' : 'decoder_index';
+      const key = el.dataset.mac + ':' + indexKey + ':' + el.dataset.field;
       clearTimeout(saveTimers[key]);
       saveTimers[key] = setTimeout(function () {
-        fetch('/api/decoder-field', {
+        const body = { mac: el.dataset.mac, field: el.dataset.field, value: el.value };
+        body[indexField] = parseInt(indexKey, 10);
+        fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mac: el.dataset.mac,
-            decoder_index: parseInt(el.dataset.decoderIndex, 10),
-            field: el.dataset.field,
-            value: el.value
-          })
-        }).catch(function (err) { console.error('decoder-field save failed', err); });
+          body: JSON.stringify(body)
+        }).catch(function (err) { console.error('field save failed', err); });
       }, 500);
     });
+
+    // "Set reference" captures the current live reading server-side (the
+    // button never sends a typed value) — see /api/path-set-reference.
+    async function setReference(mac, pathIndex, btnEl) {
+      const original = btnEl.textContent;
+      btnEl.textContent = 'Setting...';
+      btnEl.disabled = true;
+      try {
+        const res = await fetch('/api/path-set-reference', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac: mac, path_index: pathIndex })
+        });
+        const data = await res.json();
+        if (!data.ok) alert('Could not set reference: ' + (data.error || 'unknown error'));
+      } catch (err) {
+        alert('Could not set reference: ' + err);
+      } finally {
+        btnEl.textContent = original;
+        btnEl.disabled = false;
+      }
+    }
 
     // The "log this path" checkbox saves immediately on toggle — no debounce
     // needed for a single click, and no reason to wait.
@@ -640,12 +833,39 @@ DASHBOARD_HTML = """
               applyLedClass(decEl.querySelector('[data-role="led-call"]'), call === 1, 'led-red');
             });
           } else {
-            const dots = card.querySelectorAll('[data-role^="channel-"]');
-            dots.forEach(function (dotEl, i) {
-              dotEl.classList.remove('on', 'off', 'na');
-              const v = gpio[i];
-              dotEl.classList.add(v === 1 ? 'on' : (v === 0 ? 'off' : 'na'));
-            });
+            const fdPaths = card.querySelectorAll('.fd-path');
+            if (fdPaths.length) {
+              fdPaths.forEach(function (pathEl, i) {
+                const base = i * 2;
+                const voltage = gpio[base], fault = gpio[base + 1];
+                const readingEl = pathEl.querySelector('[data-role="fd-voltage"]');
+                if (readingEl) readingEl.textContent = (voltage !== undefined && voltage !== null) ? voltage.toFixed(2) : '--';
+                applyLedClass(pathEl.querySelector('[data-role="fd-fault"]'), fault === 1, 'led-red');
+
+                const storedPaths = (d.equipment && d.equipment.paths) || [];
+                const stored = storedPaths[i] || {};
+                const refRow = pathEl.querySelector('[data-role="fd-ref-row"]');
+                if (refRow) {
+                  if (stored.reference !== undefined && stored.reference !== null && voltage !== undefined && voltage !== null) {
+                    const delta = voltage - stored.reference;
+                    const flagged = Math.abs(delta) > FD_FLUCTUATION_THRESHOLD;
+                    refRow.textContent = 'Ref ' + stored.reference.toFixed(2) + ' \u00b7 \u0394 ' + (delta >= 0 ? '+' : '') + delta.toFixed(2);
+                    refRow.classList.toggle('flagged', flagged);
+                    refRow.classList.toggle('ok', !flagged);
+                  } else {
+                    refRow.textContent = 'No reference set';
+                    refRow.classList.remove('flagged', 'ok');
+                  }
+                }
+              });
+            } else {
+              const dots = card.querySelectorAll('[data-role^="channel-"]');
+              dots.forEach(function (dotEl, i) {
+                dotEl.classList.remove('on', 'off', 'na');
+                const v = gpio[i];
+                dotEl.classList.add(v === 1 ? 'on' : (v === 0 ? 'off' : 'na'));
+              });
+            }
           }
         }
 
@@ -674,6 +894,7 @@ def dashboard():
         online_count=online_count,
         total_count=len(snapshot),
         card_view=card_view,
+        fd_fluctuation_threshold=FD_FLUCTUATION_THRESHOLD,
     )
 
 

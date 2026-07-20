@@ -11,6 +11,7 @@ displays them.
 | # | Name | Folder | Channels |
 |---|------|--------|----------|
 | 1 | Talent Pack Decoder | `device_type_1_talent_pack_decoder/` | 15 (3 decoders x 5) |
+| 2 | 2 Path Fiber Drawer | `device_type_2_two_path_fiber_drawer/` | 4 (2 paths x 2, mixed analog/digital) |
 
 ## Steps to add a new one
 
@@ -26,7 +27,19 @@ displays them.
    this board, and keep the Ethernet SPI pins (already `#define`'d near the
    top of the file) untouched — they're fixed by the board's hardware, not
    configurable.
-5. Flash it to a unit and confirm in Serial Monitor that it gets a DHCP
+5. **All-digital devices** (like the Talent Pack Decoder) can leave the
+   template's channel-reading logic untouched. **If your device needs
+   analog readings** (a varying voltage, not just on/off — like the Fiber
+   Drawer's optical power sensors), use
+   `device_type_2_two_path_fiber_drawer/esp32_gpio_client.ino` as your
+   starting point instead of the plain template: it already has the
+   `IS_ANALOG[]` array, calibrated `analogReadMilliVolts()` reading with
+   sample averaging, and the ADC attenuation setup needed for accurate
+   0–3.3V readings. Remember the ESP32's ADC pins can only read 0–3.3V —
+   anything higher needs an external voltage divider (and likely a
+   protection diode) before the signal reaches the pin; see that device
+   type's section in the main README for a worked example.
+6. Flash it to a unit and confirm in Serial Monitor that it gets a DHCP
    lease, finds the broker via mDNS, and connects to MQTT — all of that
    works identically to every other device type with zero code changes.
 

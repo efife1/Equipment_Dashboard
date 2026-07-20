@@ -17,10 +17,13 @@ runs the MQTT broker plus a web dashboard showing each unit as a card.
 esp32_firmware/
   _template/                          <- copy this to create a new device type
   device_type_1_talent_pack_decoder/  <- see the dedicated section below
+  device_type_2_two_path_fiber_drawer/<- see the dedicated section below
 raspberry_pi_server/                  <- the Pi's MQTT broker + dashboard (shared by every device type)
 docs/
   ESP32-S3-ETH_Pinout.md              <- full board pinout reference
   talent_pack_decoder_card.svg        <- card render used in this README
+  two_path_fiber_drawer_card.svg      <- card render used in this README
+  fiber_drawer_voltage_divider.svg    <- wiring schematic used in this README
 ```
 
 Every device type shares the exact same networking/MQTT/discovery firmware
@@ -372,7 +375,67 @@ channel, and state (ON/OFF) for whichever day you select — or grab the raw
 CSV via the download link on that page. One file per calendar day, kept
 for 30 days automatically before being deleted.
 
-## 7. How offline detection works
+## 7. Device Type 2: 2 Path Fiber Drawer
+
+![2 Path Fiber Drawer card](docs/two_path_fiber_drawer_card.svg)
+
+Monitors 2 fiber optic power readings at once, each shown as its own
+panel. Unlike the Talent Pack Decoder (all-digital), this card reads real
+analog voltages and converts them into a meaningful number.
+
+**What each part does:**
+
+- **Name field** — a free-text label per path, editable right on the
+  card, saving automatically the same way the Talent Pack Decoder's fields do.
+- **Reading (mW)** — the live analog value for that path. By this
+  project's convention, mW = the recovered source voltage directly (a
+  1:1 mapping) — see the wiring section below for how that recovery works.
+- **Reference / Δ (delta) line** — shows the saved baseline for that path
+  and how far the current reading has drifted from it. Turns red once the
+  drift exceeds `FD_FLUCTUATION_THRESHOLD` (0.5 by default, adjustable
+  near the top of `gpio_server.py`) so a fluctuation is visible at a
+  glance instead of something you have to do mental math to notice.
+- **"Set reference" button** — captures whatever the *current live
+  reading* is at the moment you click it and saves that as the new
+  baseline. This is a capture, not a typed value — you can't type an
+  arbitrary reference number, only "make right now the baseline."
+- **Fault LED (red)** — lit when that path's fault input is active.
+
+All of it — reading, delta, and fault LED — updates live via the
+dashboard's background poll without disturbing the name field if you're
+mid-edit.
+
+**Wiring — the ESP32 can't read 20V directly.** Each voltage input needs
+an external resistor divider before the ESP32 pin:
+
+![Voltage divider schematic](docs/fiber_drawer_voltage_divider.svg)
+
+- R1 = 56kΩ (source to the ADC node), R2 = 10kΩ (ADC node to ground) — a
+  divide-by-6.6 ratio that brings a 0–20V source down to a safe 0–3.03V at
+  the pin, with margin below the ESP32's 3.3V limit.
+- A **3.3V Zener diode** from the ADC node to ground is strongly
+  recommended — it clamps the pin if the source ever exceeds the expected
+  20V (a fault condition, a miswiring, anything unexpected), protecting
+  the ESP32 regardless of what the resistor math assumes.
+- A **0.1µF ceramic capacitor** across R2 filters electrical noise —
+  matters more here than on purely digital inputs, since the
+  reference/delta feature depends on clean readings to avoid false
+  fluctuations.
+- The firmware also averages 8 ADC samples per reading and uses the
+  ESP32's calibrated `analogReadMilliVolts()` (which corrects for known
+  ADC non-linearity) rather than raw `analogRead()` math, for the same
+  reason.
+
+**Pin assignment**, using ADC1-capable pins for the two voltage inputs
+(GPIO1–10) so there's no possibility of the ADC2/WiFi conflict some other
+projects hit, even though this board is Ethernet-only:
+
+| Path | Voltage (analog) | Fault (digital) |
+|---|---|---|
+| 1 | GPIO1 | GPIO15 |
+| 2 | GPIO2 | GPIO16 |
+
+## 8. How offline detection works
 
 - Each ESP32 sets an MQTT **Last Will** message (`offline`) that the broker
   publishes automatically if the connection drops uncleanly.
@@ -382,7 +445,7 @@ for 30 days automatically before being deleted.
   heard from it in `STALE_TIMEOUT_SEC` (default 30s) — a backstop in case a
   device loses power abruptly and the LWT doesn't arrive in time.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 **`sudo: ./install.sh: command not found`** — run `sudo bash install.sh`
 instead. Files uploaded through GitHub's web interface lose their

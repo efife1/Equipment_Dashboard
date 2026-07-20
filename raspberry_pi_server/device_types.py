@@ -92,9 +92,10 @@ def upsert(type_id, name, gpio_labels, color=DEFAULT_COLOR, layout="generic"):
 
 def ensure_builtin_types():
     """Seeds built-in special-layout types on first run, if not already
-    present (e.g. if a user hasn't defined/overwritten slot 1 themselves)."""
+    present (e.g. if a user hasn't defined/overwritten that slot themselves)."""
     with _lock:
         data = _load()
+        changed = False
         if "1" not in data:
             data["1"] = {
                 "name": "Talent Pack Decoder",
@@ -104,6 +105,18 @@ def ensure_builtin_types():
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
+            changed = True
+        if "2" not in data:
+            data["2"] = {
+                "name": "2 Path Fiber Drawer",
+                "gpio_labels": default_labels(),
+                "color": "#4caf50",
+                "layout": "fiber_drawer_2path",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            changed = True
+        if changed:
             _save(data)
 
 
