@@ -223,11 +223,11 @@ def talent_pack_decoder_view(entry, equipment):
 
 # --- 2 Path Fiber Drawer: fixed 2-channel-per-path layout ---
 # Channel order within each path's 2-channel block: 0: voltage (mW, analog)
-# 1: fault (digital). Voltage is read via a voltage divider on the ESP32
-# side (see esp32_firmware/device_type_2_two_path_fiber_drawer/) and
-# published already converted back to the original 0-20V-range value.
+# 1: fault (digital). Same layout for both the 2 Path and 8 Path Fiber
+# Drawers — they only differ in how many paths there are.
 FD_CHANNELS_PER_PATH = 2
-FD_NUM_PATHS = 2
+FD2_NUM_PATHS = 2
+FD8_NUM_PATHS = 8
 # How far a reading can drift from its saved reference before the delta
 # is flagged (colored) as a fluctuation worth noticing, rather than normal
 # noise. Adjust if this doesn't match what "broad fluctuation" means for
@@ -235,15 +235,17 @@ FD_NUM_PATHS = 2
 FD_FLUCTUATION_THRESHOLD = 0.5
 
 
-def fiber_drawer_view(entry, equipment):
-    """Builds the render-ready view for a 2 Path Fiber Drawer card: the
-    live voltage (mW) and fault state per path, paired with that path's
-    live-editable name and saved reference value (from the registry)."""
+def fiber_drawer_view(entry, equipment, num_paths):
+    """Builds the render-ready view for a Fiber Drawer card (2 or 8 path):
+    the live voltage (mW) and fault state per path, paired with that
+    path's live-editable name and saved reference value (from the
+    registry). Shared between both Fiber Drawer device types — they only
+    differ in num_paths."""
     gpio_values = entry.get("gpio") or []
     stored_paths = (equipment or {}).get("paths", [])
 
     paths = []
-    for i in range(FD_NUM_PATHS):
+    for i in range(num_paths):
         base = i * FD_CHANNELS_PER_PATH
         voltage = gpio_values[base] if base < len(gpio_values) else None
         fault = gpio_values[base + 1] if base + 1 < len(gpio_values) else None
@@ -293,7 +295,9 @@ def card_view(entry):
     if layout == "talent_pack_decoder":
         view["decoders"] = talent_pack_decoder_view(entry, equipment)
     elif layout == "fiber_drawer_2path":
-        view["paths"] = fiber_drawer_view(entry, equipment)
+        view["paths"] = fiber_drawer_view(entry, equipment, FD2_NUM_PATHS)
+    elif layout == "fiber_drawer_8path":
+        view["paths"] = fiber_drawer_view(entry, equipment, FD8_NUM_PATHS)
     else:
         labels = type_def["gpio_labels"] if type_def else device_types.default_labels()
         gpio_values = entry.get("gpio") or [None] * device_types.NUM_GPIO
@@ -521,6 +525,26 @@ DASHBOARD_HTML = """
     .fd-led .dot { width: 13px; height: 13px; }
     .fd-led-label { font-size: 9.5px; color: #999; }
 
+    .fd8-paths { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+    .fd8-path { background: #141414; border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; text-align: center; }
+    .fd8-path input.fd8-name {
+      width: 100%; background: #1e1e1e; border: 1px solid #333; border-radius: 3px;
+      color: #eee; font-size: 10px; font-weight: 500; padding: 2px 3px; text-align: center;
+      box-sizing: border-box; margin-bottom: 6px;
+    }
+    .fd8-reading { font-size: 17px; font-weight: 500; color: #eee; }
+    .fd8-reading .fd8-unit { font-size: 9px; color: #666; }
+    .fd8-ref-row { font-size: 9px; color: #999; margin: 4px 0; min-height: 11px; }
+    .fd8-ref-row.flagged { color: #f44336; }
+    .fd8-ref-row.ok { color: #4caf50; }
+    .fd8-set-ref-btn {
+      width: 100%; background: #1e1e1e; border: 1px solid #333; border-radius: 3px;
+      color: #999; font-size: 8.5px; padding: 3px; cursor: pointer; margin-bottom: 6px;
+    }
+    .fd8-set-ref-btn:hover { background: #2a2a2a; color: #eee; }
+    .fd8-path .dot { width: 10px; height: 10px; margin: 0 auto 2px; }
+    .fd8-led-label { font-size: 8px; color: #999; }
+
     .filter-bar { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1rem; font-size: 0.85rem; color: #aaa; }
     .filter-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
     .filter-bar a { color: #4caf50; cursor: pointer; text-decoration: none; }
@@ -630,6 +654,22 @@ DASHBOARD_HTML = """
               <div class="dot {{ 'led-red' if p.fault == 1 else 'led-idle' }}" data-role="fd-fault"></div>
               <div class="fd-led-label">Fault</div>
             </div>
+          </div>
+          {% endfor %}
+        </div>
+      {% elif view.layout == "fiber_drawer_8path" %}
+        <div class="fd8-paths">
+          {% for p in view.paths %}
+          <div class="fd8-path" data-path-index="{{ p.index }}">
+            <input class="fd8-name" type="text" placeholder="Name" value="{{ p.name }}"
+                   data-mac="{{ d.mac }}" data-path-index="{{ p.index }}" data-field="name">
+            <div class="fd8-reading" data-role="fd-voltage">{{ "%.2f"|format(p.voltage) if p.voltage is not none else "--" }}<span class="fd8-unit"> mW</span></div>
+            <div class="fd8-ref-row {{ 'flagged' if p.flagged else ('ok' if p.reference is not none else '') }}" data-role="fd-ref-row">
+              {% if p.reference is not none %}R {{ "%.2f"|format(p.reference) }} &Delta;{{ "%+.2f"|format(p.delta) }}{% else %}No ref{% endif %}
+            </div>
+            <button type="button" class="fd8-set-ref-btn" onclick="setReference('{{ d.mac }}', {{ p.index }}, this)">Set ref</button>
+            <div class="dot {{ 'led-red' if p.fault == 1 else 'led-idle' }}" data-role="fd-fault"></div>
+            <div class="fd8-led-label">Fault</div>
           </div>
           {% endfor %}
         </div>
@@ -833,7 +873,7 @@ DASHBOARD_HTML = """
               applyLedClass(decEl.querySelector('[data-role="led-call"]'), call === 1, 'led-red');
             });
           } else {
-            const fdPaths = card.querySelectorAll('.fd-path');
+            const fdPaths = card.querySelectorAll('.fd-path, .fd8-path');
             if (fdPaths.length) {
               fdPaths.forEach(function (pathEl, i) {
                 const base = i * 2;

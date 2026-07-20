@@ -12,6 +12,7 @@ displays them.
 |---|------|--------|----------|
 | 1 | Talent Pack Decoder | `device_type_1_talent_pack_decoder/` | 15 (3 decoders x 5) |
 | 2 | 2 Path Fiber Drawer | `device_type_2_two_path_fiber_drawer/` | 4 (2 paths x 2, mixed analog/digital) |
+| 3 | 8 Path Fiber Drawer | `device_type_3_eight_path_fiber_drawer/` | 16 (8 paths x 2, analog via external I2C ADC) |
 
 ## Steps to add a new one
 
@@ -42,6 +43,13 @@ displays them.
 6. Flash it to a unit and confirm in Serial Monitor that it gets a DHCP
    lease, finds the broker via mDNS, and connects to MQTT — all of that
    works identically to every other device type with zero code changes.
+
+**Running out of native ADC pins?** `device_type_3_eight_path_fiber_drawer/`
+is the reference example for reading analog channels through an external
+I2C ADC (an ADS7828) instead of the ESP32's own ADC pins — useful any time
+a device needs more analog channels than the board's ~7 safe native
+ADC-capable pins can cover. Only 2 ESP32 pins (I2C SDA/SCL) are needed
+regardless of how many channels the external ADC provides.
 
 ### 2. Raspberry Pi side
 

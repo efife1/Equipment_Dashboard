@@ -18,12 +18,23 @@ esp32_firmware/
   _template/                          <- copy this to create a new device type
   device_type_1_talent_pack_decoder/  <- see the dedicated section below
   device_type_2_two_path_fiber_drawer/<- see the dedicated section below
+  device_type_3_eight_path_fiber_drawer/ <- see the dedicated section below
 raspberry_pi_server/                  <- the Pi's MQTT broker + dashboard (shared by every device type)
 docs/
   ESP32-S3-ETH_Pinout.md              <- full board pinout reference
   talent_pack_decoder_card.svg        <- card render used in this README
+  talent_pack_decoder_schematic.md    <- expansion board schematic for device type 1
+  talent_pack_decoder_bom.md          <- bill of materials for device type 1
+  talent_pack_decoder_pcb_design.md   <- PCB layout design brief for device type 1
   two_path_fiber_drawer_card.svg      <- card render used in this README
   fiber_drawer_voltage_divider.svg    <- wiring schematic used in this README
+  two_path_fiber_drawer_schematic.md  <- expansion board schematic for device type 2
+  two_path_fiber_drawer_bom.md        <- bill of materials for device type 2
+  two_path_fiber_drawer_pcb_design.md <- PCB layout design brief for device type 2
+  fiber_drawer_8path_schematic.md     <- full net-by-net schematic for device type 3's expansion board
+  fiber_drawer_8path_bom.md           <- bill of materials for device type 3's expansion board
+  fiber_drawer_8path_pcb_design.md    <- PCB layout design brief for device type 3
+  OPEN_ITEMS.md                       <- hardware questions still open across all three device types
 ```
 
 Every device type shares the exact same networking/MQTT/discovery firmware
@@ -375,6 +386,12 @@ channel, and state (ON/OFF) for whichever day you select — or grab the raw
 CSV via the download link on that page. One file per calendar day, kept
 for 30 days automatically before being deleted.
 
+**Building an expansion board:** `docs/talent_pack_decoder_schematic.md`,
+`docs/talent_pack_decoder_bom.md`, and `docs/talent_pack_decoder_pcb_design.md`
+cover the full carrier-board design (screw terminals, dedicated power
+input, mounting) if you want to build one rather than wire this by hand —
+see `docs/OPEN_ITEMS.md` for what's still unverified before fabricating.
+
 ## 7. Device Type 2: 2 Path Fiber Drawer
 
 ![2 Path Fiber Drawer card](docs/two_path_fiber_drawer_card.svg)
@@ -435,7 +452,54 @@ projects hit, even though this board is Ethernet-only:
 | 1 | GPIO1 | GPIO15 |
 | 2 | GPIO2 | GPIO16 |
 
-## 8. How offline detection works
+**Building an expansion board:** `docs/two_path_fiber_drawer_schematic.md`,
+`docs/two_path_fiber_drawer_bom.md`, and
+`docs/two_path_fiber_drawer_pcb_design.md` cover the full carrier-board
+design if you want to build one rather than wire this by hand — see
+`docs/OPEN_ITEMS.md` for what's still unverified before fabricating.
+
+## 8. Device Type 3: 8 Path Fiber Drawer
+
+Same idea as the 2 Path Fiber Drawer, scaled to 8 fiber runs on one card —
+name, live mW reading, reference/Δ tracking, "Set reference" button, and a
+fault LED per path, laid out as a compact 4x2 grid instead of two
+spacious panels.
+
+**Why this one needed different hardware:** 8 analog readings exceeds
+this board's native ADC pin budget (only 7 safe ADC-capable pins remain
+after excluding Ethernet, PSRAM, USB, and boot-strapping pins — see
+"GPIO pin availability" above). Rather than use a risky boot-strapping
+pin to close that one-pin gap, this device type reads all 8 voltages
+through an **ADS7828 8-channel I2C ADC** instead of the ESP32's own ADC —
+the same "expander" pattern discussed earlier in this project for digital
+pins, just the analog equivalent. That means:
+
+- Only **2 ESP32 pins** (I2C SDA/SCL) are used for all 8 voltage readings,
+  regardless of channel count — versus 8 native ADC pins for the 2 Path
+  version.
+- The divider math is different too: the ADS7828 uses its internal 2.5V
+  reference (not the ESP32's 3.3V), so the resistor values are R1=75kΩ,
+  R2=10kΩ (recovery factor 8.5) rather than the 2 Path version's
+  56kΩ/10kΩ. See `docs/fiber_drawer_8path_schematic.md` for the complete
+  circuit, and `docs/fiber_drawer_8path_bom.md` for a full parts list.
+
+**Pin assignment:**
+
+| Function | Pin |
+|---|---|
+| I2C SDA | GPIO1 |
+| I2C SCL | GPIO2 |
+| Fault 1-8 | GPIO15, 16, 17, 18, 21, 38, 39, 40 |
+
+**Hardware status:** the schematic and BOM are complete, but this device
+type needs a custom carrier PCB (the Waveshare board doesn't have
+built-in screw terminals or an ADS7828). See
+`docs/fiber_drawer_8path_pcb_design.md` for the board design brief, and
+`docs/OPEN_ITEMS.md` for what's still open (header pin verification,
+ADS7828 command byte confirmation, and the actual PCB routing) before
+fabricating.
+
+## 9. How offline detection works
 
 - Each ESP32 sets an MQTT **Last Will** message (`offline`) that the broker
   publishes automatically if the connection drops uncleanly.
@@ -445,7 +509,7 @@ projects hit, even though this board is Ethernet-only:
   heard from it in `STALE_TIMEOUT_SEC` (default 30s) — a backstop in case a
   device loses power abruptly and the LWT doesn't arrive in time.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 **`sudo: ./install.sh: command not found`** — run `sudo bash install.sh`
 instead. Files uploaded through GitHub's web interface lose their

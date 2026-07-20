@@ -116,6 +116,16 @@ def ensure_builtin_types():
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             changed = True
+        if "3" not in data:
+            data["3"] = {
+                "name": "8 Path Fiber Drawer",
+                "gpio_labels": default_labels(),
+                "color": "#4caf50",
+                "layout": "fiber_drawer_8path",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            changed = True
         if changed:
             _save(data)
 
