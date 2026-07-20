@@ -656,7 +656,7 @@ DASHBOARD_HTML = """
         console.error('poll failed', err);
       }
     }
-    setInterval(pollDevices, 3000);
+    setInterval(pollDevices, 1000);
   </script>
 </body>
 </html>
