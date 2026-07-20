@@ -21,9 +21,11 @@
 #   cd Equipment_Dashboard/raspberry_pi_server
 #   sudo bash install.sh
 #
-# Re-running this script later pulls the latest commit and
-# updates the running service in place — handy for deploying
-# updates to the fleet's server without doing it by hand.
+# This first run also installs a global "EQ-update" command — after that,
+# updating to the latest GitHub version any time is just:
+#   sudo EQ-update
+# (EQ-update is a thin wrapper that re-runs this same script, so there's
+# only one place — this file — that actually knows how to install/update.)
 # ============================================================
 
 set -euo pipefail
@@ -57,13 +59,13 @@ echo "==> Target interface: $TARGET_IFACE (edit TARGET_IFACE at the top of"
 echo "    this script if that's not the port your ESP32 units connect to)"
 echo
 
-echo "==> [1/9] Installing system packages (git, mosquitto, avahi, nmap, python3-venv)..."
+echo "==> [1/10] Installing system packages (git, mosquitto, avahi, nmap, python3-venv)..."
 apt-get update -qq
 apt-get install -y git mosquitto mosquitto-clients avahi-daemon nmap python3-venv python3-pip
 systemctl enable --now mosquitto
 
 echo
-echo "==> [2/9] Fetching code from GitHub ($REPO_URL, branch $REPO_BRANCH)..."
+echo "==> [2/10] Fetching code from GitHub ($REPO_URL, branch $REPO_BRANCH)..."
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "Existing install found at $INSTALL_DIR — pulling latest changes..."
   git -C "$INSTALL_DIR" fetch --quiet origin "$REPO_BRANCH"
@@ -89,7 +91,7 @@ if [ ! -f "$SRC_DIR/gpio_server.py" ]; then
 fi
 
 echo
-echo "==> [3/9] Configuring Mosquitto to listen on all interfaces..."
+echo "==> [3/10] Configuring Mosquitto to listen on all interfaces..."
 # NOTE: allow_anonymous true means any device on this network can publish/
 # subscribe to the broker, with no username/password. This is a deliberate
 # trade-off for an isolated equipment network, not an oversight — if this
@@ -102,7 +104,7 @@ EOF
 systemctl restart mosquitto
 
 echo
-echo "==> [4/9] Setting up network auto-config for $TARGET_IFACE..."
+echo "==> [4/10] Setting up network auto-config for $TARGET_IFACE..."
 cp "$SRC_DIR/network-autoconfig.sh" "$INSTALL_DIR/network-autoconfig.sh"
 chmod +x "$INSTALL_DIR/network-autoconfig.sh"
 
@@ -125,18 +127,18 @@ else
 fi
 
 echo
-echo "==> [5/9] Advertising the MQTT broker via mDNS (_mqtt._tcp)..."
+echo "==> [5/10] Advertising the MQTT broker via mDNS (_mqtt._tcp)..."
 cp "$SRC_DIR/mqtt.service" /etc/avahi/services/mqtt.service
 systemctl restart avahi-daemon
 
 echo
-echo "==> [6/9] Creating Python virtual environment and installing dependencies..."
+echo "==> [6/10] Creating Python virtual environment and installing dependencies..."
 sudo -u "$INSTALL_USER" python3 -m venv "$SRC_DIR/venv"
 sudo -u "$INSTALL_USER" "$SRC_DIR/venv/bin/pip" install --quiet --upgrade pip
 sudo -u "$INSTALL_USER" "$SRC_DIR/venv/bin/pip" install --quiet -r "$SRC_DIR/requirements.txt"
 
 echo
-echo "==> [7/9] Installing systemd service ($SERVICE_NAME)..."
+echo "==> [7/10] Installing systemd service ($SERVICE_NAME)..."
 sed -e "s/__INSTALL_USER__/$INSTALL_USER/" \
     -e "s#/opt/gpio-monitor#$SRC_DIR#g" \
     "$SRC_DIR/gpio-server.service" > "/etc/systemd/system/${SERVICE_NAME}.service"
@@ -145,7 +147,12 @@ systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
 
 echo
-echo "==> [8/9] Verifying the service started..."
+echo "==> [8/10] Installing the 'EQ-update' command..."
+cp "$SRC_DIR/EQ-update" /usr/local/bin/EQ-update
+chmod +x /usr/local/bin/EQ-update
+
+echo
+echo "==> [9/10] Verifying the service started..."
 sleep 2
 if systemctl is-active --quiet "$SERVICE_NAME"; then
   echo "Service is running."
@@ -155,7 +162,7 @@ else
 fi
 
 echo
-echo "==> [9/9] Done."
+echo "==> [10/10] Done."
 PI_IP="$(hostname -I | awk '{print $1}')"
 
 echo
@@ -174,10 +181,11 @@ echo " Verify mDNS advertisement from another machine with:"
 echo "   avahi-browse -r _mqtt._tcp      (Linux)"
 echo "   dns-sd -B _mqtt._tcp            (macOS)"
 echo
-echo " To deploy an update later: pull your changes to GitHub, then"
-echo " just re-run this script — it re-clones and restarts the service."
+echo " To deploy an update later: push your changes to GitHub, then run:"
+echo "   sudo EQ-update"
 echo
 echo " Useful commands:"
+echo "   sudo EQ-update                          # pull + deploy latest from GitHub"
 echo "   sudo systemctl status $SERVICE_NAME    # check status"
 echo "   sudo journalctl -u $SERVICE_NAME -f    # live logs"
 echo "   sudo systemctl restart $SERVICE_NAME   # restart"

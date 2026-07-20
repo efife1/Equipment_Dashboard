@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# ============================================================
+# EQ-update
+# ------------------------------------------------------------
+# Pulls the latest Equipment Dashboard code from GitHub and
+# re-installs/restarts it on this Pi. This is a thin wrapper
+# around install.sh — there's deliberately only one place
+# (install.sh) that actually knows how to install/update
+# everything; this command just finds it and re-runs it, so the
+# update logic never has to be duplicated or kept in sync
+# between two scripts.
+#
+# Usage:
+#   sudo EQ-update
+#
+# Installed automatically to /usr/local/bin/EQ-update the first
+# time install.sh runs, so it's available from any directory
+# after that.
+# ============================================================
+set -euo pipefail
+
+INSTALL_DIR="/opt/gpio-monitor"
+REPO_SUBDIR="raspberry_pi_server"
+SRC_DIR="$INSTALL_DIR/$REPO_SUBDIR"
+
+if [ "$EUID" -ne 0 ]; then
+  echo "EQ-update needs root privileges. Please re-run it with sudo:"
+  echo "  sudo EQ-update"
+  exit 1
+fi
+
+if [ ! -f "$SRC_DIR/install.sh" ]; then
+  echo "No existing install found at $SRC_DIR."
+  echo "Run the full installer first — see the README's Quick install section:"
+  echo "  git clone https://github.com/efife1/Equipment_Dashboard.git"
+  echo "  cd Equipment_Dashboard/raspberry_pi_server"
+  echo "  sudo bash install.sh"
+  exit 1
+fi
+
+echo "==> EQ-update: pulling the latest code from GitHub and reinstalling..."
+echo
+exec bash "$SRC_DIR/install.sh"

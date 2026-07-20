@@ -57,12 +57,28 @@ This one script handles everything:
 - Creates a Python virtual environment and installs dependencies
 - Installs a **systemd service** (`gpio-server`) so the server starts
   automatically on boot and restarts itself if it ever crashes
+- Installs a global **`EQ-update`** command (see below) for one-word future updates
 - Prints the dashboard URL when done
 
-**Deploying updates later:** push your changes to GitHub, then just re-run
-`sudo bash install.sh` on the Pi — it pulls the latest commit and restarts
-the service. Your commissioning registry (`registry.json`) isn't tracked by
-git, so it survives updates untouched.
+**Deploying updates later:** push your changes to GitHub, then run:
+```bash
+sudo EQ-update
+```
+That's it — `EQ-update` is installed automatically the first time
+`install.sh` runs, and works from any directory after that (it's just a
+thin wrapper that re-runs `install.sh` with the latest code, so there's
+only one place that actually knows how to install/update anything). It
+pulls the latest commit and restarts the service. Your commissioning
+registry (`registry.json`) and card types (`device_types.json`) aren't
+tracked by git, so they survive updates untouched.
+
+If you'd rather not rely on the global command, the equivalent manual
+steps still work too:
+```bash
+cd ~/Equipment_Dashboard/raspberry_pi_server
+git pull
+sudo bash install.sh
+```
 
 **If a previous/different install is already on this Pi:** clear it out
 first so nothing conflicts with the fresh install:
@@ -80,6 +96,7 @@ then run the quick install steps above.
 
 Once installed, manage it with:
 ```bash
+sudo EQ-update                        # pull + deploy the latest from GitHub
 sudo systemctl status gpio-server     # check status
 sudo journalctl -u gpio-server -f     # live logs
 sudo systemctl restart gpio-server    # restart
@@ -372,6 +389,12 @@ instead. Files uploaded through GitHub's web interface lose their
 executable permission bit, so `./install.sh` (which relies on that bit)
 fails even though the file is right there; `bash install.sh` runs it
 regardless of permissions.
+
+**`sudo: EQ-update: command not found`** — `EQ-update` is only installed
+after `install.sh` has been run at least once (it copies itself to
+`/usr/local/bin/EQ-update` during install). If you haven't done the full
+install yet on this Pi, run the Quick install steps above first; after
+that, `EQ-update` works from anywhere.
 
 **Wrong content after cloning / unexpected service name in the install
 output** — double check `github.com/efife1/Equipment_Dashboard` actually
