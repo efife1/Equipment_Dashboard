@@ -22,9 +22,11 @@ actual board before finalizing your footprint** — see `docs/OPEN_ITEMS.md`.
 
 ## Suggested carrier board outline
 
-- Recommend roughly **90mm x 70mm** — smaller than the 8 Path Fiber
-  Drawer's board since there's no ADC chip or precision analog section to
-  fit, just 15 simple protection resistors and 4 screw terminal blocks.
+- Recommend roughly **100mm x 75mm** — slightly larger than the original
+  estimate since each of the 15 channels now carries three components
+  (series resistor, zener, pulldown) instead of one, but still smaller
+  than the 8 Path Fiber Drawer's board since there's no ADC chip or I2C
+  bus to route.
 - 2-layer PCB is more than sufficient — this design has no
   noise-sensitive signals at all, unlike the two Fiber Drawer boards.
 - Standard 1.6mm FR4, 1oz copper.
@@ -34,11 +36,12 @@ actual board before finalizing your footprint** — see `docs/OPEN_ITEMS.md`.
 - **Center**: the 2x20 female socket pair, oriented so the Waveshare
   board's USB-C port and RJ45 Ethernet jack overhang the board edge once
   plugged in.
-- **Three clusters around the edges**, one per decoder: 5 protection
-  resistors + a 6-position screw terminal block each, positioned so the
-  physical layout roughly mirrors the dashboard card's 3-decoder
-  left-to-right arrangement — makes field wiring easier to reason about
-  at a glance ("decoder 2's terminal block is the middle one").
+- **Three clusters around the edges**, one per decoder: 5 clamp circuits
+  (series resistor + zener + pulldown each) + a 6-position screw
+  terminal block, positioned so the physical layout roughly mirrors the
+  dashboard card's 3-decoder left-to-right arrangement — makes field
+  wiring easier to reason about at a glance ("decoder 2's terminal block
+  is the middle one").
 - **One edge**: the power section (DC input screw terminal, Schottky
   diode, buck regulator module footprint).
 - **Mounting holes**: 4x M3 holes near the corners for standoffs.

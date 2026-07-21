@@ -34,9 +34,9 @@ to these before ordering parts or submitting any board for fabrication.
       than analog values needing resolution, the clamp passes real
       signals through close to unattenuated and only engages if the
       voltage approaches the 24V ceiling. No further hardware
-      verification needed before fabrication. Update
+      verification needed before fabrication. See
       `talent_pack_decoder_schematic.md` and `talent_pack_decoder_bom.md`
-      with the per-channel resistor/zener/pull-down (15x each).
+      for the per-channel resistor/zener/pull-down (15x each).
 
 ## 8 Path Fiber Drawer specific
 
